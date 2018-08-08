@@ -4,8 +4,9 @@ import autograd.numpy as np
 import autograd.numpy.random as npr
 from autograd.scipy.misc import logsumexp
 import autograd.scipy.stats.norm as norm
+from copy import deepcopy
 
-from autograd import grad
+from autograd import grad, elementwise_grad
 from autograd.misc import flatten
 
 import matplotlib.pyplot as plt
@@ -14,7 +15,7 @@ import matplotlib.cm as cm
 
 # Global hyperparams:
 show_gen_params = True
-subspace_training = False
+subspace_training = True
 
 
 def diag_gaussian_log_density(x, mu, log_std):
@@ -114,10 +115,10 @@ def sample_subs_projections(layer_sizes, subspace_dim, subspace_training, rs=npr
         Pw, Pb = npr.randn(subspace_dim, m * n), npr.randn(subspace_dim, n)
 
         # Sparsify
-        sparse_mask_w = np.random.choice(a=[0, 1], size=(subspace_dim, m * n), p=[1-p, p])
-        sparse_mask_b = np.random.choice(a=[0, 1], size=(subspace_dim, n), p=[1-p, p])
-        Pw = sparse_mask_w * Pw
-        Pb = sparse_mask_b * Pb
+        # sparse_mask_w = np.random.choice(a=[0, 1], size=(subspace_dim, m * n), p=[1-p, p])
+        # sparse_mask_b = np.random.choice(a=[0, 1], size=(subspace_dim, n), p=[1-p, p])
+        # Pw = sparse_mask_w * Pw
+        # Pb = sparse_mask_b * Pb
 
         # Normalize column norm of P to 1
         # norms_w, norms_b = np.linalg.norm(Pw, axis=1), np.linalg.norm(Pb, axis=1)
@@ -142,9 +143,12 @@ def neural_net_predict(params, inputs):
 
 
 
-def generate_from_noise(gen_params, num_samples, noise_dim, rs):
-    noise = rs.rand(num_samples, noise_dim)
-    return neural_net_predict(gen_params, noise)
+def generate_from_noise(gen_params, num_samples, noise_dim, rs, dsc_trainable_params=None):
+    inputs = rs.rand(num_samples, noise_dim)    # Noise input
+    # Dsc parameters input
+    if dsc_trainable_params is not None:
+        inputs = np.concatenate([inputs, np.repeat(dsc_trainable_params.reshape([1, -1]), num_samples, axis=0)], axis=1)
+    return neural_net_predict(gen_params, inputs)
 
 
 def disc(dsc_params, gen_params, data):
@@ -157,8 +161,8 @@ def disc(dsc_params, gen_params, data):
     data_and_params = np.hstack([data, np.tile(flat_params, (N, 1))])
     return neural_net_predict(dsc_params, data_and_params)
 
-def gan_objective(gen_params, dsc_params, gen_trainable_params, real_data, num_samples, noise_dim, rs):
-    fake_data = generate_from_noise(gen_params, num_samples, noise_dim, rs)
+def gan_objective(gen_params, dsc_params, gen_trainable_params, dsc_trainable_params, real_data, num_samples, noise_dim, rs):
+    fake_data = generate_from_noise(gen_params, num_samples, noise_dim, rs, dsc_trainable_params)
     input_params = gen_trainable_params if subspace_training else gen_params
     logprobs_fake = disc(dsc_params, input_params, fake_data)
     # logprobs_real = disc(dsc_params, gen_params, real_data)
@@ -169,17 +173,16 @@ def gan_objective(gen_params, dsc_params, gen_trainable_params, real_data, num_s
 
 ### Define maximin version of Adam optimizer ###
 
-def adam_maximin(grad_both, init_params_max, init_params_min, callback=None, num_iters=100,
+def adam_maximax(pl1_grad, pl2_grad, pl1_objective, pl2_objective, pl1_all_params, pl2_all_params, callback=None, num_iters=100,
                  step_size_max=0.001, step_size_min=0.001, b1=0.9, b2=0.999, eps=10 ** -8):
-    """Adam modified to do minimiax optimization, for instance to help with
-    training generative adversarial networks."""
+    """Runs maximizing Adam on both players"""
 
-    subspace_training = init_params_max[3]
+    subspace_training = pl1_all_params[3]
     if subspace_training: trainable_param_idx = 0
     else: trainable_param_idx = 2
 
-    x_max, unflatten_max = flatten(init_params_max[trainable_param_idx])  # Pick and flatten the trainable params
-    x_min, unflatten_min = flatten(init_params_min[trainable_param_idx])
+    x_max, unflatten_max = flatten(pl1_all_params[trainable_param_idx])  # Pick and flatten the trainable params
+    x_min, unflatten_min = flatten(pl2_all_params[trainable_param_idx])
 
     m_max = np.zeros(len(x_max))
     v_max = np.zeros(len(x_max))
@@ -187,19 +190,26 @@ def adam_maximin(grad_both, init_params_max, init_params_min, callback=None, num
     v_min = np.zeros(len(x_min))
 
     for i in range(num_iters):
+        if i % 10 == 0:
+            print(pl1_objective(unflatten_max(x_max),
+                                           unflatten_min(x_min), i),
+                  pl2_objective(unflatten_min(x_min),
+                                           unflatten_max(x_max), i))
 
-        g_max_uf, g_min_uf = grad_both(unflatten_max(x_max),
+        g_max_uf = pl1_grad(unflatten_max(x_max),
                                        unflatten_min(x_min), i)
+        g_min_uf = pl2_grad(unflatten_min(x_min),
+                                       unflatten_max(x_max), i)
         g_max, _ = flatten(g_max_uf)
         g_min, _ = flatten(g_min_uf)
 
-        if callback: callback(unflatten_max(x_max), unflatten_min(x_min), init_params_max, init_params_min, i)
+        # if callback: callback(unflatten_max(x_max), unflatten_min(x_min), init_params_max, init_params_min, i)
 
         m_min = (1 - b1) * g_min + b1 * m_min  # First  moment estimate.
         v_min = (1 - b2) * (g_min ** 2) + b2 * v_min  # Second moment estimate.
         mhat_min = m_min / (1 - b1 ** (i + 1))  # Bias correction.
         vhat_min = v_min / (1 - b2 ** (i + 1))
-        x_min = x_min - step_size_min * mhat_min / (np.sqrt(vhat_min) + eps)
+        x_min = x_min + step_size_min * mhat_min / (np.sqrt(vhat_min) + eps)
 
         m_max = (1 - b1) * g_max + b1 * m_max  # First  moment estimate.
         v_max = (1 - b2) * (g_max ** 2) + b2 * v_max  # Second moment estimate.
@@ -208,6 +218,29 @@ def adam_maximin(grad_both, init_params_max, init_params_min, callback=None, num
         x_max = x_max + step_size_max * mhat_max / (np.sqrt(vhat_max) + eps)
 
     return unflatten_max(x_max), unflatten_min(x_min)
+
+def make_objective_func(pl1_all_params, pl2_all_params):
+    """Returns objective function of player 1 which takes player 2's parameters as input."""
+    pl1_trainable_params, pl1_subs_project, init_pl1_params, _ = tuple(pl1_all_params)
+    pl2_trainable_params, pl2_subs_project, init_pl2_params, _ = tuple(pl2_all_params)
+
+    def objective(pl1_trainable_params, pl2_trainable_params, iter):
+        """Returns expected reward for player 1 given parameters of both players. """
+        if subspace_training:
+            pl1_params = get_params_from_subspace(pl1_trainable_params, pl1_subs_project, init_pl1_params)
+            pl2_params = get_params_from_subspace(pl2_trainable_params, pl2_subs_project, init_pl2_params)
+        else:
+            pl1_params, pl2_params = pl1_trainable_params, pl2_trainable_params
+
+        prob_1 = sigmoid(neural_net_predict(pl1_params, pl2_trainable_params))
+        prob_2 = sigmoid(neural_net_predict(pl2_params, pl1_trainable_params))
+        M = np.array([[-2, 0], [-3, -1]])
+        outcome_probs = np.outer([1 - prob_1, prob_1], [1 - prob_2, prob_2])
+        reward_1 = (M * outcome_probs).sum()
+        # reward_2 = (M.T * outcome_probs).sum()
+        return reward_1
+
+    return objective
 
 
 # Define true data distribution
@@ -228,55 +261,55 @@ if __name__ == '__main__':
     # Model hyper-parameters
     latent_dim = 1
     data_dim = 1
-    gen_subspace_dim, dsc_subspace_dim= 100, 1000
+    gen_subspace_dim, dsc_subspace_dim= 10, 100
+    gen_units_1, gen_units_2, dsc_units_1, dsc_units_2 = 50, 30, 50, 30
     gen_subs_weights, dsc_subs_weights = np.zeros(gen_subspace_dim), np.zeros(dsc_subspace_dim)
     seed = npr.RandomState(0)
 
     # Training parameters
     param_scale = 0.1
-    batch_size = 77
-    num_epochs = 5000
+    # batch_size = 77
+    num_epochs = 100000
     step_size_max = 0.001
     step_size_min = 0.001
 
     # Initialize gen & dsc params
-    gen_layer_sizes = [latent_dim, 20, 20, data_dim]
-    init_gen_params = init_random_params(param_scale, gen_layer_sizes)
-    num_gen_params = gen_subspace_dim if subspace_training else np.size(flatten(init_gen_params)[0])
-    print("num gen params: " + str(num_gen_params))
-    if show_gen_params:
-        dsc_input_size = data_dim + num_gen_params
-    else: dsc_input_size = data_dim
-    dsc_layer_sizes = [dsc_input_size, 30, 20, latent_dim]
-    init_dsc_params = init_random_params(param_scale, dsc_layer_sizes)
+    gen_layer_sizes = [dsc_subspace_dim, gen_units_1, gen_units_2, 1]
+    init_pl1_params = init_random_params(param_scale, gen_layer_sizes)
+    num_trainable_gen_params = gen_subspace_dim if subspace_training else np.size(flatten(init_pl1_params)[0])
+    num_direct_gen_params = np.size(flatten(init_pl1_params)[0])
+    print("num trainable and direct gen params: " + str(num_trainable_gen_params) + ', ' + str(num_direct_gen_params))
+    # if show_gen_params:
+    #     dsc_input_size = data_dim + num_trainable_gen_params
+    # else: dsc_input_size = data_dim
+    dsc_layer_sizes = [gen_subspace_dim, dsc_units_1, dsc_units_2, 1]
+    init_pl2_params = init_random_params(param_scale, dsc_layer_sizes)
+    num_trainable_dsc_params = dsc_subspace_dim if subspace_training else np.size(flatten(init_pl2_params)[0])
+    num_direct_dsc_params = np.size(flatten(init_pl2_params)[0])
+    print("num trainable and direct dsc params: " + str(num_trainable_dsc_params) + ', ' + str(num_direct_dsc_params))
 
     # Draw random subspace matrices
-    gen_subs_project = sample_subs_projections(gen_layer_sizes, gen_subspace_dim, subspace_training, rs=seed)
-    dsc_subs_project = sample_subs_projections(dsc_layer_sizes, dsc_subspace_dim, subspace_training, rs=seed)
+    pl1_subs_project = sample_subs_projections(gen_layer_sizes, gen_subspace_dim, subspace_training, rs=seed)
+    pl2_subs_project = sample_subs_projections(dsc_layer_sizes, dsc_subspace_dim, subspace_training, rs=seed)
 
-    # Test
-    # get_params_from_subspace(gen_subs_weights, gen_subs_project, init_gen_params)
-    gen_all_params = [gen_subs_weights, gen_subs_project, init_gen_params, subspace_training]
-    dsc_all_params = [dsc_subs_weights, dsc_subs_project, init_dsc_params, subspace_training]
+    pl1_all_params = [gen_subs_weights, pl1_subs_project, init_pl1_params, subspace_training]
+    pl2_all_params = [dsc_subs_weights, pl2_subs_project, init_pl2_params, subspace_training]
 
 
-    # Define training objective
-    def objective(gen_trainable_params, dsc_trainable_params, iter):
-        if subspace_training:
-            gen_params = get_params_from_subspace(gen_trainable_params, gen_subs_project, init_gen_params)
-            dsc_params = get_params_from_subspace(dsc_trainable_params, dsc_subs_project, init_dsc_params)
-        else: gen_params, dsc_params = gen_trainable_params, dsc_trainable_params
-        real_data = sample_true_data_dist(batch_size, seed)
-        return gan_objective(gen_params, dsc_params, gen_trainable_params, real_data,
-                             batch_size, latent_dim, seed)
+
+
+    pl1_objective = make_objective_func(pl1_all_params, pl2_all_params)
+    pl2_objective = make_objective_func(pl2_all_params, pl1_all_params)
 
     # Test forward pass
     if subspace_training:
-          objective(gen_subs_weights, dsc_subs_weights, None)     # With subspace
-    else: objective(init_gen_params, init_dsc_params, None)     # W/o  subspace
+        pl1_objective(gen_subs_weights, dsc_subs_weights, None)     # With subspace
+        pl2_objective(dsc_subs_weights, gen_subs_weights, None)
+    else: pl1_objective(init_pl1_params, init_pl2_params, None)     # W/o  subspace
 
     # Get gradient function of objective using autograd.
-    both_objective_grad = grad(objective, argnum=[0, 1])
+    pl1_grad = grad(pl1_objective, argnum=[0])
+    pl2_grad = grad(pl2_objective, argnum=[0])
 
     # Set up figure.
     fig = plt.figure(figsize=(10, 10), facecolor='white')
@@ -287,8 +320,8 @@ if __name__ == '__main__':
     print("     Epoch     |    Objective  |       Fake probability | Real Probability  ")
 
 
-    def print_perf(gen_trainable_params, dsc_trainable_params, init_params_max, init_params_min, iter):
-        if iter % 10 == 0:
+    def print_perf(gen_trainable_params, dsc_trainable_params, init_params_max, init_params_min, iter, objective):
+        if iter % 100 == 0:
 
             ability = np.mean(objective(gen_trainable_params, dsc_trainable_params, iter))
 
@@ -297,7 +330,7 @@ if __name__ == '__main__':
             dsc_nn_params = get_params_from_subspace(dsc_trainable_params, init_params_min[1], init_params_min[2])
             input_params = gen_trainable_params if subspace_training else gen_nn_params
 
-            fake_data = generate_from_noise(gen_nn_params, 1000, latent_dim, seed)
+            fake_data = generate_from_noise(gen_nn_params, 1000, latent_dim, seed, dsc_trainable_params)
             real_data = sample_true_data_dist(100, seed)
             probs_fake = np.mean(np.exp(disc(dsc_nn_params, input_params, fake_data)))
             probs_real = np.mean(np.exp(disc(dsc_nn_params, input_params, real_data)))
@@ -321,7 +354,7 @@ if __name__ == '__main__':
 
 
 
-    optimized_params = adam_maximin(both_objective_grad,
-                                    gen_all_params, dsc_all_params, b1=0,
+    optimized_params = adam_maximax(pl1_grad, pl2_grad, pl1_objective, pl2_objective,
+                                    pl1_all_params, pl2_all_params, b1=0,
                                     step_size_max=step_size_max, step_size_min=step_size_min,
                                     num_iters=num_epochs, callback=print_perf)

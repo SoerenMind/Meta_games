@@ -4,6 +4,7 @@ import autograd.numpy as np
 import autograd.numpy.random as npr
 from autograd.scipy.misc import logsumexp
 import autograd.scipy.stats.norm as norm
+from copy import deepcopy
 
 from autograd import grad
 from autograd.misc import flatten
@@ -14,7 +15,7 @@ import matplotlib.cm as cm
 
 # Global hyperparams:
 show_gen_params = True
-subspace_training = False
+subspace_training = True
 
 
 def diag_gaussian_log_density(x, mu, log_std):
@@ -114,10 +115,10 @@ def sample_subs_projections(layer_sizes, subspace_dim, subspace_training, rs=npr
         Pw, Pb = npr.randn(subspace_dim, m * n), npr.randn(subspace_dim, n)
 
         # Sparsify
-        sparse_mask_w = np.random.choice(a=[0, 1], size=(subspace_dim, m * n), p=[1-p, p])
-        sparse_mask_b = np.random.choice(a=[0, 1], size=(subspace_dim, n), p=[1-p, p])
-        Pw = sparse_mask_w * Pw
-        Pb = sparse_mask_b * Pb
+        # sparse_mask_w = np.random.choice(a=[0, 1], size=(subspace_dim, m * n), p=[1-p, p])
+        # sparse_mask_b = np.random.choice(a=[0, 1], size=(subspace_dim, n), p=[1-p, p])
+        # Pw = sparse_mask_w * Pw
+        # Pb = sparse_mask_b * Pb
 
         # Normalize column norm of P to 1
         # norms_w, norms_b = np.linalg.norm(Pw, axis=1), np.linalg.norm(Pb, axis=1)
@@ -142,9 +143,12 @@ def neural_net_predict(params, inputs):
 
 
 
-def generate_from_noise(gen_params, num_samples, noise_dim, rs):
-    noise = rs.rand(num_samples, noise_dim)
-    return neural_net_predict(gen_params, noise)
+def generate_from_noise(gen_params, num_samples, noise_dim, rs, dsc_trainable_params=None):
+    inputs = rs.rand(num_samples, noise_dim)    # Noise input
+    # Dsc parameters input
+    if dsc_trainable_params is not None:
+        inputs = np.concatenate([inputs, np.repeat(dsc_trainable_params.reshape([1, -1]), num_samples, axis=0)], axis=1)
+    return neural_net_predict(gen_params, inputs)
 
 
 def disc(dsc_params, gen_params, data):
@@ -157,8 +161,8 @@ def disc(dsc_params, gen_params, data):
     data_and_params = np.hstack([data, np.tile(flat_params, (N, 1))])
     return neural_net_predict(dsc_params, data_and_params)
 
-def gan_objective(gen_params, dsc_params, gen_trainable_params, real_data, num_samples, noise_dim, rs):
-    fake_data = generate_from_noise(gen_params, num_samples, noise_dim, rs)
+def gan_objective(gen_params, dsc_params, gen_trainable_params, dsc_trainable_params, real_data, num_samples, noise_dim, rs):
+    fake_data = generate_from_noise(gen_params, num_samples, noise_dim, rs, dsc_trainable_params)
     input_params = gen_trainable_params if subspace_training else gen_params
     logprobs_fake = disc(dsc_params, input_params, fake_data)
     # logprobs_real = disc(dsc_params, gen_params, real_data)
@@ -229,6 +233,7 @@ if __name__ == '__main__':
     latent_dim = 1
     data_dim = 1
     gen_subspace_dim, dsc_subspace_dim= 100, 1000
+    gen_units_1, gen_units_2, dsc_units_1, dsc_units_2 = 20, 20, 30, 20
     gen_subs_weights, dsc_subs_weights = np.zeros(gen_subspace_dim), np.zeros(dsc_subspace_dim)
     seed = npr.RandomState(0)
 
@@ -240,25 +245,26 @@ if __name__ == '__main__':
     step_size_min = 0.001
 
     # Initialize gen & dsc params
-    gen_layer_sizes = [latent_dim, 20, 20, data_dim]
+    gen_layer_sizes = [latent_dim + dsc_subspace_dim, gen_units_1, gen_units_2, data_dim]
     init_gen_params = init_random_params(param_scale, gen_layer_sizes)
-    num_gen_params = gen_subspace_dim if subspace_training else np.size(flatten(init_gen_params)[0])
-    print("num gen params: " + str(num_gen_params))
+    num_trainable_gen_params = gen_subspace_dim if subspace_training else np.size(flatten(init_gen_params)[0])
+    num_direct_gen_params = np.size(flatten(init_gen_params)[0])
+    print("num trainable and direct gen params: " + str(num_trainable_gen_params) + ', ' + str(num_direct_gen_params))
     if show_gen_params:
-        dsc_input_size = data_dim + num_gen_params
+        dsc_input_size = data_dim + num_trainable_gen_params
     else: dsc_input_size = data_dim
-    dsc_layer_sizes = [dsc_input_size, 30, 20, latent_dim]
+    dsc_layer_sizes = [dsc_input_size, dsc_units_1, dsc_units_2, latent_dim]    # TODO(sorenmind): Why latent_dim?
     init_dsc_params = init_random_params(param_scale, dsc_layer_sizes)
+    num_trainable_dsc_params = dsc_subspace_dim if subspace_training else np.size(flatten(init_dsc_params)[0])
+    num_direct_dsc_params = np.size(flatten(init_dsc_params)[0])
+    print("num trainable and direct dsc params: " + str(num_trainable_dsc_params) + ', ' + str(num_direct_dsc_params))
 
     # Draw random subspace matrices
     gen_subs_project = sample_subs_projections(gen_layer_sizes, gen_subspace_dim, subspace_training, rs=seed)
     dsc_subs_project = sample_subs_projections(dsc_layer_sizes, dsc_subspace_dim, subspace_training, rs=seed)
 
-    # Test
-    # get_params_from_subspace(gen_subs_weights, gen_subs_project, init_gen_params)
     gen_all_params = [gen_subs_weights, gen_subs_project, init_gen_params, subspace_training]
     dsc_all_params = [dsc_subs_weights, dsc_subs_project, init_dsc_params, subspace_training]
-
 
     # Define training objective
     def objective(gen_trainable_params, dsc_trainable_params, iter):
@@ -267,7 +273,12 @@ if __name__ == '__main__':
             dsc_params = get_params_from_subspace(dsc_trainable_params, dsc_subs_project, init_dsc_params)
         else: gen_params, dsc_params = gen_trainable_params, dsc_trainable_params
         real_data = sample_true_data_dist(batch_size, seed)
-        return gan_objective(gen_params, dsc_params, gen_trainable_params, real_data,
+
+        # For testing
+        # dsc_trainable_params = deepcopy(dsc_trainable_params)
+        # dsc_trainable_params = np.zeros(len(dsc_trainable_params))
+
+        return gan_objective(gen_params, dsc_params, gen_trainable_params, dsc_trainable_params, real_data,
                              batch_size, latent_dim, seed)
 
     # Test forward pass
@@ -297,7 +308,10 @@ if __name__ == '__main__':
             dsc_nn_params = get_params_from_subspace(dsc_trainable_params, init_params_min[1], init_params_min[2])
             input_params = gen_trainable_params if subspace_training else gen_nn_params
 
-            fake_data = generate_from_noise(gen_nn_params, 1000, latent_dim, seed)
+            # TODO(sorenmind): REMOVE!
+            # dsc_trainable_params = np.zeros(len(dsc_trainable_params))
+
+            fake_data = generate_from_noise(gen_nn_params, 1000, latent_dim, seed, dsc_trainable_params)
             real_data = sample_true_data_dist(100, seed)
             probs_fake = np.mean(np.exp(disc(dsc_nn_params, input_params, fake_data)))
             probs_real = np.mean(np.exp(disc(dsc_nn_params, input_params, real_data)))
