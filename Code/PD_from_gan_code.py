@@ -5,17 +5,14 @@ import autograd.numpy.random as npr
 from autograd.scipy.misc import logsumexp
 import autograd.scipy.stats.norm as normal
 norm = np.linalg.norm
-
-import socket
-socket.gethostbyname("")
-
-
-
 from autograd import grad, hessian, hessian_vector_product, vector_jacobian_product
 from autograd.misc import flatten
-
+import matplotlib
+# matplotlib.use('MacOSX')
+# import os
+# print(os.environ['MPLBACKEND'])
+# print(matplotlib.get_backend())
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 
 def assignprint(y):
     print(y)
@@ -26,6 +23,9 @@ def assignprint(y):
 show_gen_params = True
 subspace_training = True
 optimizer = assignprint('GD')
+CC_val, DD_val = assignprint((-1., -2.))
+# CC_val, DD_val = assignprint((-0.1, -2.9))
+show_plot = False
 
 
 def diag_gaussian_log_density(x, mu, log_std):
@@ -144,56 +144,92 @@ def maximax_optimizer(pl1_grad, pl2_grad, pl1_objective, pl2_objective, pl1_all_
     pl1_hess = hessian(pl1_objective, argnum=[0])
     pl2_hess = hessian(pl2_objective, argnum=[0])
 
-
+    # # Alternating optimization per player
+    params, objectives, grad_funcs, grad_eval, unflatten, step_sizes = [x_max, x_min], [pl1_objective, pl2_objective], \
+               [pl1_grad, pl2_grad], [None, None],[unflatten_max, unflatten_min], [step_size_max, step_size_min]
+    v, m, hess = [v_max, v_min], [m_max, m_min], [pl1_hess, pl2_hess]
     for i in range(num_iters):
-        # Get gradients
-        g_max_uf = pl1_grad(unflatten_max(x_max),
-                                       unflatten_min(x_min), i)
-        g_min_uf = pl2_grad(unflatten_min(x_min),
-                                       unflatten_max(x_max), i)
-        g_max, unflatten_g_max = flatten(g_max_uf)
-        g_min, unflatten_g_min = flatten(g_min_uf)
 
-        if optimizer == 'GD':
-            # Apply GD update
-            GD_lrate_adjust = 10
-            x_max = x_max + GD_lrate_adjust * step_size_max * g_max
-            x_min = x_min + GD_lrate_adjust * step_size_min * g_min
+        for id, opp_id in zip([0, 1], [1, 0]):
+            g_uf = grad_funcs[id](unflatten[id](params[id]),
+                                unflatten[opp_id](params[opp_id]), i)
+            g, unflatten_g = flatten(g_uf)
+            grad_eval[id] = g
 
-        elif optimizer == 'SGA':
-            # Apply symplectic adjusted gradient
-            pl1_A = assym_hess_A(unflatten_max(x_max), unflatten_min(x_min), pl1_hess, None)
-            pl2_A = assym_hess_A(unflatten_min(x_min), unflatten_max(x_max), pl2_hess, None)
-            update_max = flatten(g_max_uf + np.dot(pl1_A, g_max_uf))
-            update_min = flatten(g_min_uf + np.dot(pl2_A, g_min_uf))
-            x_max = x_max + step_size_max * update_max
-            x_min = x_min + step_size_min * update_min
+            if optimizer == 'GD':
+                params = params + step_sizes[id] * g
 
-        elif optimizer == 'Adam':
-            # Apply Adam updates
-            m_min = (1 - b1) * g_min + b1 * m_min  # First  moment estimate.
-            v_min = (1 - b2) * (g_min ** 2) + b2 * v_min  # Second moment estimate.
-            v_min = (1 - b2) * (g_min ** 2) + b2 * v_min  # Second moment estimate.
-            mhat_min = m_min / (1 - b1 ** (i + 1))  # Bias correction.
-            vhat_min = v_min / (1 - b2 ** (i + 1))
-            x_min = x_min + step_size_min * mhat_min / (np.sqrt(vhat_min) + eps)
+            elif optimizer == 'SGA':
+                A = assym_hess_A(unflatten[id](params[id]), unflatten[opp_id](params[opp_id]), hess[id], None)
+                update = flatten(g_uf + np.dot(A, g_uf))
+                params[id] = params[id] + step_sizes[id] * update
 
-            m_max = (1 - b1) * g_max + b1 * m_max  # First  moment estimate.
-            v_max = (1 - b2) * (g_max ** 2) + b2 * v_max  # Second moment estimate.
-            mhat_max = m_max / (1 - b1 ** (i + 1))  # Bias correction.
-            vhat_max = v_max / (1 - b2 ** (i + 1))
-            x_max = x_max + step_size_max * mhat_max / (np.sqrt(vhat_max) + eps)
+            elif optimizer == 'Adam':
+                m[id] = (1 - b1) * g + b1 * m[id]  # First  moment estimate.
+                v[id] = (1 - b2) * (g ** 2) + b2 * v[id]  # Second moment estimate.
+                mhat_max = m[id] / (1 - b1 ** (i + 1))  # Bias correction.
+                vhat_max = v[id] / (1 - b2 ** (i + 1))
+                params[id] = params[id] + step_sizes[id] * mhat_max / (np.sqrt(vhat_max) + eps)
 
-        # Plot results
+        # Plot
         if i % 100 == 0:
-            y1, y2 = (pl1_objective(unflatten_max(x_max),
-                                           unflatten_min(x_min), i),
-                  pl2_objective(unflatten_min(x_min),
-                                           unflatten_max(x_max), i))
-            g_max_norm, g_min_norm = norm(g_max), norm(g_min)
-            print(i, y1, y2, '   -   ', g_max_norm, g_min_norm)
+            y2, y1 = (objectives[id](unflatten[id](params[id]),
+                                     unflatten[opp_id](params[opp_id]), i),
+                  objectives[opp_id](unflatten[opp_id](params[opp_id]),
+                                     unflatten[id](params[id]), i))
+            g_2_norm, g_1_norm = norm(g[id]), norm(g[opp_id])
+            print(i, y1, y2, '   -   ', g_1_norm, g_2_norm)
             reward_log.append((y1, y2)), x_log.append(i)
         if callback: callback(reward_log, x_log, i)
+
+    # # Joint optimization
+    # for i in range(num_iters):
+    #     # Get gradients
+    #     g_max_uf = pl1_grad(unflatten_max(x_max),
+    #                                    unflatten_min(x_min), i)
+    #     g_min_uf = pl2_grad(unflatten_min(x_min),
+    #                                    unflatten_max(x_max), i)
+    #     g_max, unflatten_g_max = flatten(g_max_uf)
+    #     g_min, unflatten_g_min = flatten(g_min_uf)
+    #
+    #     if optimizer == 'GD':
+    #         x_max = x_max + step_size_max * g_max
+    #         x_min = x_min + step_size_min * g_min
+    #
+    #     elif optimizer == 'SGA':
+    #         # Apply symplectic adjusted gradient
+    #         pl1_A = assym_hess_A(unflatten_max(x_max), unflatten_min(x_min), pl1_hess, None)
+    #         pl2_A = assym_hess_A(unflatten_min(x_min), unflatten_max(x_max), pl2_hess, None)
+    #         update_max = flatten(g_max_uf + np.dot(pl1_A, g_max_uf))
+    #         update_min = flatten(g_min_uf + np.dot(pl2_A, g_min_uf))
+    #         x_max = x_max + step_size_max * update_max
+    #         x_min = x_min + step_size_min * update_min
+    #
+    #     elif optimizer == 'Adam':
+    #         m_min = (1 - b1) * g_min + b1 * m_min  # First  moment estimate.
+    #         v_min = (1 - b2) * (g_min ** 2) + b2 * v_min  # Second moment estimate.
+    #         v_min = (1 - b2) * (g_min ** 2) + b2 * v_min  # Second moment estimate.
+    #         mhat_min = m_min / (1 - b1 ** (i + 1))  # Bias correction.
+    #         vhat_min = v_min / (1 - b2 ** (i + 1))
+    #         x_min = x_min + step_size_min * mhat_min / (np.sqrt(vhat_min) + eps)
+    #
+    #         m_max = (1 - b1) * g_max + b1 * m_max  # First  moment estimate.
+    #         v_max = (1 - b2) * (g_max ** 2) + b2 * v_max  # Second moment estimate.
+    #         mhat_max = m_max / (1 - b1 ** (i + 1))  # Bias correction.
+    #         vhat_max = v_max / (1 - b2 ** (i + 1))
+    #         x_max = x_max + step_size_max * mhat_max / (np.sqrt(vhat_max) + eps)
+    #
+    #
+    #     # Plot
+    #     if i % 100 == 0:
+    #         y1, y2 = (pl1_objective(unflatten_max(x_max),
+    #                                        unflatten_min(x_min), i),
+    #               pl2_objective(unflatten_min(x_min),
+    #                                        unflatten_max(x_max), i))
+    #         g_max_norm, g_min_norm = norm(g_max), norm(g_min)
+    #         print(i, y1, y2, '   -   ', g_max_norm, g_min_norm)
+    #         reward_log.append((y1, y2)), x_log.append(i)
+    #     if callback: callback(reward_log, x_log, i)
 
     return unflatten_max(x_max), unflatten_min(x_min)
 
@@ -212,7 +248,7 @@ def make_objective_func(pl1_all_params, pl2_all_params):
 
         prob_1 = sigmoid(neural_net_predict(pl1_params, pl2_trainable_params))
         prob_2 = sigmoid(neural_net_predict(pl2_params, pl1_trainable_params))
-        M = np.array([[-2.9, 0], [-3, -0.1]])   # P, T, S, R: 3) -0.1 > (0-3)/2 = -1.5. Check. 4) T>R or P>S: 0 > -0.1 or -2.9 > -3 Check both.
+        M = np.array([[DD_val, 0], [-3, CC_val]])
         outcome_probs = np.outer([1 - prob_1, prob_1], [1 - prob_2, prob_2])
         reward_1 = (M * outcome_probs).sum()
         # reward_2 = (M.T * outcome_probs).sum()
@@ -227,21 +263,27 @@ if __name__ == '__main__':
     # Model hyper-parameters
     latent_dim = 1
     data_dim = 1
-    gen_subspace_dim, dsc_subspace_dim= 50,50
-    gen_units_1, gen_units_2, dsc_units_1, dsc_units_2 = 10, 10, 10, 10
+    gen_subspace_dim, dsc_subspace_dim= 50, 50
+    gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((200, 40, 40, 200, 40, 40))
+    # gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((50, 10, None, 50, 10, None))
+    # gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((50, None, None, 50, None, None))
     pl1_subs_params, pl2_subs_params = np.zeros(gen_subspace_dim), np.zeros(dsc_subspace_dim)
     seed = npr.RandomState(0)
 
     # Training parameters
-    param_scale = 0.1
+    param_scale = assignprint(.1)
     # batch_size = 77
     num_epochs = 50000
-    step_size_max = 0.001
-    step_size_min = 0.001
+    lrate_adjust = 10. if optimizer == 'GD' else 1.
+    _, lrate = assignprint(("lrate:", 0.0001))
+    step_size_max = lrate * lrate_adjust
+    step_size_min = lrate * lrate_adjust
+    step_size_max_LOLA = lrate * lrate_adjust
+    step_size_min_LOLA = lrate * lrate_adjust
 
     # Initialize gen & dsc params
-    gen_layer_sizes = [dsc_subspace_dim, gen_units_1, gen_units_2, 1]
-    dsc_layer_sizes = [gen_subspace_dim, dsc_units_1, dsc_units_2, 1]
+    gen_layer_sizes = [dsc_subspace_dim, gen_units_1, gen_units_2, gen_units_3, 1]
+    dsc_layer_sizes = [gen_subspace_dim, dsc_units_1, dsc_units_2, dsc_units_3, 1]
 
     init_pl1_params = init_random_params(param_scale, gen_layer_sizes)
     num_trainable_gen_params = gen_subspace_dim if subspace_training else np.size(flatten(init_pl1_params)[0])
@@ -273,16 +315,21 @@ if __name__ == '__main__':
     d_R2_d_t1 = grad(pl2_objective, argnum=[1])
     d_R1_d_t1 = grad(pl1_objective, argnum=[0])
 
-    def pl1_LOLA_objective(pl1_subs_params, pl2_subs_params, iter):
+    def pl1_LOLA_objective_taylor(pl1_subs_params, pl2_subs_params, iter):
         """Note that this predicts a GD step, not an Adam step."""
         return pl1_objective(pl1_subs_params, pl2_subs_params, iter) \
             + step_size_min  \
               * np.dot(d_R2_d_t2(pl2_subs_params, pl1_subs_params, iter)[0], d_R1_d_t2(pl1_subs_params, pl2_subs_params, iter)[0])
 
-    def pl2_LOLA_objective(pl2_subs_params, pl1_subs_params, iter):
+    def pl2_LOLA_objective_taylor(pl2_subs_params, pl1_subs_params, iter):
         return pl2_objective(pl2_subs_params, pl1_subs_params, iter) \
             + step_size_max \
               * np.dot(d_R1_d_t1(pl1_subs_params, pl2_subs_params, iter)[0], d_R2_d_t1(pl2_subs_params, pl1_subs_params, iter)[0])
+
+    pl1_LOLA_objective = lambda pl1_subs_params, pl2_subs_params, iter: pl1_objective(pl1_subs_params, pl2_subs_params
+                                       + d_R2_d_t2(pl2_subs_params, pl1_subs_params, iter)[0] * step_size_min_LOLA, iter)
+    pl2_LOLA_objective = lambda pl2_subs_params, pl1_subs_params, iter: pl2_objective(pl2_subs_params, pl1_subs_params
+                                       + d_R1_d_t1(pl1_subs_params, pl2_subs_params, iter)[0] * step_size_max_LOLA, iter)
 
     # pl1_hess = hessian(pl1_objective, argnum=[0])
     # pl2_hess = hessian(pl2_objective, argnum=[0])
@@ -306,26 +353,28 @@ if __name__ == '__main__':
     else: pl1_objective(init_pl1_params, init_pl2_params, None)     # W/o  subspace
 
     # Get gradient function of objective using autograd.
-    pl1_grad = grad(pl1_objective, argnum=[0])
-    pl2_grad = grad(pl2_objective, argnum=[0])
-    # pl1_grad = grad(pl1_LOLA_objective, argnum=[0])
-    # pl2_grad = grad(pl2_LOLA_objective, argnum=[0])
-    # print('Using LOLA')
+    # pl1_grad = grad(pl1_objective, argnum=[0])
+    # pl2_grad = grad(pl2_objective, argnum=[0])
+    # print('Not using LOLA')
+    pl1_grad = grad(pl1_LOLA_objective, argnum=[0])
+    pl2_grad = grad(pl2_LOLA_objective, argnum=[0])
+    print('Using LOLA')
 
     # Set up figure.
     fig = plt.figure(figsize=(3, 4), facecolor='white')
     ax = fig.add_subplot(111, frameon=False)
-    plt.show(block=False)
     ax.set_title("Reward of players vs grad steps")
     print("Epoch|Objective 1|Objective 2      |      grad norm 1   |  grad norm 2")
 
 
     def print_log(log, x_log, iter):
         if iter % 200 == 0:
-            ax.plot(x_log, log)
-            ax.set_ylim([-3, 0])
-            plt.draw()
-            plt.pause(1.0 / 6000.0)
+            if show_plot:
+                ax.plot(x_log, log)
+                ax.set_ylim([-3, 0])
+                plt.draw()
+                plt.pause(1.0 / 6000.0)
+        return
 
 
 
