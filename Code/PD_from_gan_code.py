@@ -22,10 +22,10 @@ def assignprint(y):
 # Global hyperparams:
 show_gen_params = True
 subspace_training = True
-optimizer = assignprint('GD')
-CC_val, DD_val = assignprint((-1., -2.))
+optimizer = assignprint('Adam')
+CC_val, DD_val = assignprint((-0.1, -2.9))
 # CC_val, DD_val = assignprint((-0.1, -2.9))
-show_plot = False
+show_plot = True
 
 
 def diag_gaussian_log_density(x, mu, log_std):
@@ -117,7 +117,7 @@ def neural_net_predict(params, inputs):
        inputs is an (N x D) matrix."""
     for W, b in params:
         outputs = np.dot(inputs, W) + b
-        inputs = relu(outputs)  # missing sigmoid + logits?
+        inputs = relu(outputs)
     return outputs
 
 
@@ -231,7 +231,7 @@ def maximax_optimizer(pl1_grad, pl2_grad, pl1_objective, pl2_objective, pl1_all_
     #         reward_log.append((y1, y2)), x_log.append(i)
     #     if callback: callback(reward_log, x_log, i)
 
-    return unflatten_max(x_max), unflatten_min(x_min)
+    return unflatten_max(x_max), unflatten_min(x_min), reward_log, x_log
 
 def make_objective_func(pl1_all_params, pl2_all_params):
     """Returns objective function of player 1 which takes player 2's parameters as input."""
@@ -264,8 +264,8 @@ if __name__ == '__main__':
     latent_dim = 1
     data_dim = 1
     gen_subspace_dim, dsc_subspace_dim= 50, 50
-    gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((200, 40, 40, 200, 40, 40))
-    # gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((50, 10, None, 50, 10, None))
+    # gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((200, 40, 40, 200, 40, 40))
+    gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((25, 10, None, 25, 10, None))
     # gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((50, None, None, 50, None, None))
     pl1_subs_params, pl2_subs_params = np.zeros(gen_subspace_dim), np.zeros(dsc_subspace_dim)
     seed = npr.RandomState(0)
@@ -273,9 +273,9 @@ if __name__ == '__main__':
     # Training parameters
     param_scale = assignprint(.1)
     # batch_size = 77
-    num_epochs = 50000
+    num_epochs = 25000
     lrate_adjust = 10. if optimizer == 'GD' else 1.
-    _, lrate = assignprint(("lrate:", 0.0001))
+    _, lrate = assignprint(("lrate:", 0.001))
     step_size_max = lrate * lrate_adjust
     step_size_min = lrate * lrate_adjust
     step_size_max_LOLA = lrate * lrate_adjust
@@ -368,10 +368,10 @@ if __name__ == '__main__':
 
 
     def print_log(log, x_log, iter):
-        if iter % 200 == 0:
+        if iter % 50 == 0:
             if show_plot:
                 ax.plot(x_log, log)
-                ax.set_ylim([-3, 0])
+                ax.set_ylim([-5, 0])
                 plt.draw()
                 plt.pause(1.0 / 6000.0)
         return
@@ -379,7 +379,7 @@ if __name__ == '__main__':
 
 
 
-    optimized_params = maximax_optimizer(pl1_grad, pl2_grad, pl1_objective, pl2_objective,
+    _, _, reward_log, x_log = maximax_optimizer(pl1_grad, pl2_grad, pl1_objective, pl2_objective,
                                          pl1_all_params, pl2_all_params, assym_hess_A=None, b1=0,
                                          step_size_max=step_size_max, step_size_min=step_size_min,
                                          num_iters=num_epochs, callback=print_log)

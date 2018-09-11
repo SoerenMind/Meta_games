@@ -20,10 +20,12 @@ class Hp():
         self.batch_size = 128
         self.use_baseline = True
         self.seed = 42
+        self.optimizer = torch.optim.SGD        # Change back to Adam?
 
 hp = Hp()
 
 ipd = IPD(hp.len_rollout, hp.batch_size)
+
 
 def magic_box(x):
     return torch.exp(x - x.detach())
@@ -104,10 +106,10 @@ class Agent():
     def __init__(self):
         # init theta and its optimizer
         self.theta = nn.Parameter(torch.zeros(5, requires_grad=True))
-        self.theta_optimizer = torch.optim.Adam((self.theta,),lr=hp.lr_out)
+        self.theta_optimizer = hp.optimizer((self.theta,),lr=hp.lr_out)
         # init values and its optimizer
         self.values = nn.Parameter(torch.zeros(5, requires_grad=True))
-        self.value_optimizer = torch.optim.Adam((self.values,),lr=hp.lr_v)
+        self.value_optimizer = hp.optimizer((self.values,),lr=hp.lr_v)
 
     def theta_update(self, objective):
         self.theta_optimizer.zero_grad()
