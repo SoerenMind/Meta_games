@@ -389,5 +389,5 @@ if __name__ == '__main__':
                                          pl1_all_params, pl2_all_params, assym_hess_A=None, b1=0,
                                          step_size_max=step_size_max, step_size_min=step_size_min,
                                          num_iters=num_epochs, callback=print_log)
-    plot.show(block=True)
+    plt.show(block=True)
 

@@ -73,14 +73,15 @@ class OppAwareNet(torch.nn.Module):
         self.w4 = torch.nn.Parameter(torch.zeros(layer_sizes[3], layer_sizes[4]).normal_(0, 0.1))
         self.b4 = torch.nn.Parameter(torch.zeros(layer_sizes[4]).normal_(0, 0.1))
         # self.trainable_params = [self.w2, self.b2, self.w3, self.b3, self.w4, self.b4]
+        # self.mask_w1 = torch.FloatTensor(10, 10).uniform_() > 0.8     # bit mask
         self.optimizer = hp.optim_algo(self.parameters(), lr=hp.lr_out)
     def forward(self, net2):
         out = torch.empty(0,requires_grad=True).to(device)
         # Concatenate parameters of layer [1:]
         for param2 in list(net2.parameters()):
             param2 = param2.view(-1)
-            out = torch.cat((out, param2), dim=0)ZZZ
-        out.view_(1, -1)
+            out = torch.cat((out, param2), dim=0)
+        out = out.view(1, -1)
         out = F.relu(out.mm(self.w1) + self.b1)
         out = F.relu(out.mm(self.w2) + self.b2)
         out = F.relu(out.mm(self.w3) + self.b3)
