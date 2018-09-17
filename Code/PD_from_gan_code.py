@@ -14,18 +14,20 @@ import matplotlib
 # print(matplotlib.get_backend())
 import matplotlib.pyplot as plt
 
-def assignprint(y):
-    print(y)
+def assignprint(y, name=''):
+    print(str(name), y)
     return y
 
 
 # Global hyperparams:
 show_gen_params = True
 subspace_training = True
-optimizer = assignprint('Adam')
+optimizer = assignprint('GD')
+# CC_val, DD_val = assignprint((-1., -2.))
 CC_val, DD_val = assignprint((-0.1, -2.9))
-# CC_val, DD_val = assignprint((-0.1, -2.9))
-show_plot = True
+show_plot = False
+identity_subspace = assignprint(True)  # Projection=identity, might make some params unseen
+old_normalization = assignprint(True)   # Erroneous but initial CC happened here
 
 
 def diag_gaussian_log_density(x, mu, log_std):
@@ -78,7 +80,7 @@ def get_params_from_subspace(subs_params, subs_project, init_params):
         params.append((W,b))
     return params
 
-def sample_subs_projections(layer_sizes, subspace_dim, subspace_training, rs=npr.RandomState(0)):
+def sample_subs_projections(layer_sizes, subspace_dim, subspace_training):
     """Returns a list of tuples (Pw, Pb) - one for weights and biases of each layer. Pw and Pb are approximately
     orthonormal matrices (in high dimension) that project subspace weights into a subspace of the weights/biases space.
     The matrix P from Uber's work is a stacking of all Pw, Pb. We make P sparse to save space/time."""
@@ -89,13 +91,16 @@ def sample_subs_projections(layer_sizes, subspace_dim, subspace_training, rs=npr
 
     # Quantities needed for column norm normalization and sparsifying P
     num_params = np.sum([m * n for m,n in zip(layer_sizes[:-1], layer_sizes[1:])])
-    p = np.max([1 / np.sqrt(num_params), 0.1])
-    exp_column_norm = np.sqrt(num_params * p)
+    if old_normalization:
+        p = np.max([1 / np.sqrt(num_params), 0.1])
+        exp_column_norm = np.sqrt(num_params * p)
+    else: exp_column_norm = np.sqrt(num_params)
 
     for m, n in zip(layer_sizes[:-1], layer_sizes[1:]):
         # Create random projections P
         Pw, Pb = npr.randn(subspace_dim, m * n), npr.randn(subspace_dim, n)
-
+        if identity_subspace:
+            Pw, Pb = np.eye(subspace_dim, m * n), np.eye(subspace_dim, n)
         # Sparsify
         # sparse_mask_w = np.random.choice(a=[0, 1], size=(subspace_dim, m * n), p=[1-p, p])
         # sparse_mask_b = np.random.choice(a=[0, 1], size=(subspace_dim, n), p=[1-p, p])
@@ -263,17 +268,18 @@ if __name__ == '__main__':
     # Model hyper-parameters
     latent_dim = 1
     data_dim = 1
-    gen_subspace_dim, dsc_subspace_dim= 50, 50
-    # gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((200, 40, 40, 200, 40, 40))
-    gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((25, 10, None, 25, 10, None))
+    gen_subspace_dim, dsc_subspace_dim = 50, 50
+    gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((200, 40, 40, 200, 40, 40))
+    # gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((50, 10, None, 50, 10, None))
     # gen_units_1, gen_units_2, gen_units_3, dsc_units_1, dsc_units_2, dsc_units_3 = assignprint((50, None, None, 50, None, None))
     pl1_subs_params, pl2_subs_params = np.zeros(gen_subspace_dim), np.zeros(dsc_subspace_dim)
-    seed = npr.RandomState(0)
+    # seed = npr.RandomState(assignprint(0, 'seed:'))
+    npr.seed(assignprint(1, 'seed:'))
 
     # Training parameters
     param_scale = assignprint(.1)
     # batch_size = 77
-    num_epochs = 25000
+    num_epochs = 50000
     lrate_adjust = 10. if optimizer == 'GD' else 1.
     _, lrate = assignprint(("lrate:", 0.001))
     step_size_max = lrate * lrate_adjust
@@ -298,8 +304,8 @@ if __name__ == '__main__':
     print("num trainable and direct dsc params: " + str(num_trainable_dsc_params) + ', ' + str(num_direct_dsc_params))
 
     # Draw random subspace matricesA
-    pl1_subs_project = sample_subs_projections(gen_layer_sizes, gen_subspace_dim, subspace_training, rs=seed)
-    pl2_subs_project = sample_subs_projections(dsc_layer_sizes, dsc_subspace_dim, subspace_training, rs=seed)
+    pl1_subs_project = sample_subs_projections(gen_layer_sizes, gen_subspace_dim, subspace_training)
+    pl2_subs_project = sample_subs_projections(dsc_layer_sizes, dsc_subspace_dim, subspace_training)
 
     pl1_all_params = [pl1_subs_params, pl1_subs_project, init_pl1_params, subspace_training]
     pl2_all_params = [pl2_subs_params, pl2_subs_project, init_pl2_params, subspace_training]
@@ -383,5 +389,5 @@ if __name__ == '__main__':
                                          pl1_all_params, pl2_all_params, assym_hess_A=None, b1=0,
                                          step_size_max=step_size_max, step_size_min=step_size_min,
                                          num_iters=num_epochs, callback=print_log)
-
+    plot.show(block=True)
 

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from envs import IPD, PD, OSPD, OSIPD
+from LOLA_DiCE_master.envs import IPD, PD, OSPD, OSIPD
 import numpy as np
 import matplotlib.pyplot as plt
 from copy import deepcopy
@@ -12,25 +12,27 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class HyParams():
     def __init__(self):
-        self.lr_out = 0.01          # default: 0.2
-        self.lr_in = 0.01           # default: 0.3
-        self.optim_algo = torch.optim.Adam
-        # self.optim_algo = torch.optim.SGD
+        self.diff_through_inner_opt = False
+        self.lr_out = 0.1          # default: 0.2
+        self.lr_in = 0.1           # default: 0.3
+        # self.optim_algo = torch.optim.Adam
+        self.optim_algo = torch.optim.SGD
         self.joint_optim = False    # joint or alternating GD
         # Games: PD (1 state), IPD (5 states), OSPD (1 state), OSIPD (5 states)
         self.game, self.num_states, self.net_type = 'OSPD', 1, 'OppAwareNet'    # 'OppAwareNet', 'NoInputFcNet'
-        self.layer_sizes = [None, 200, 40, 40, self.num_states]
+        self.layer_sizes = [None, 10, 3, 3, self.num_states]    # 50 free params
         self.gamma = 0.96
         self.n_outer_opt = 1000
-        self.n_inner_opt = (1,1+1)
+        self.n_inner_opt = (0,1+1)
         self.seed = 0
         # self.payout_mat = [[-2,0],[-3,-1]]  # Not implemented for IPD
         self.payout_mat = [[-2.9,0],[-3,-0.1]]
         self.plot_progress = True
         self.plot_every_n = self.n_outer_opt // 5.
 
-
 hp = HyParams()
+exp_name = hp.__dict__
+print(exp_name)
 
 
 class NoInputFcNet(torch.nn.Module):
@@ -71,19 +73,19 @@ class OppAwareNet(torch.nn.Module):
         self.w4 = torch.nn.Parameter(torch.zeros(layer_sizes[3], layer_sizes[4]).normal_(0, 0.1))
         self.b4 = torch.nn.Parameter(torch.zeros(layer_sizes[4]).normal_(0, 0.1))
         # self.trainable_params = [self.w2, self.b2, self.w3, self.b3, self.w4, self.b4]
-        self.optimizer = hp.optim_algo(self.trainable_params, lr=hp.lr_out)
+        self.optimizer = hp.optim_algo(self.parameters(), lr=hp.lr_out)
     def forward(self, net2):
         out = torch.empty(0,requires_grad=True).to(device)
         # Concatenate parameters of layer [1:]
         for param2 in list(net2.parameters()):
             param2 = param2.view(-1)
-            out = torch.cat((out, param2), dim=0)
-        # TODO: remove
-        # out.data.fill_(0.1)
-        out = F.relu(out.view(1,-1).mm(self.w1) + self.b1)
+            out = torch.cat((out, param2), dim=0)ZZZ
+        out.view_(1, -1)
+        out = F.relu(out.mm(self.w1) + self.b1)
         out = F.relu(out.mm(self.w2) + self.b2)
         out = F.relu(out.mm(self.w3) + self.b3)
-        return (out.mm(self.w4) + self.b4).view(-1)
+        out =        out.mm(self.w4) + self.b4
+        return out.view(-1)
 
 
 def play_LOLA(n_inner_opt):
@@ -102,7 +104,11 @@ def play_LOLA(n_inner_opt):
 
         # Inner optimization
         for k in range(n_inner_opt):
-            true_objective2 = game_NN.true_objective(net2_, net1)
+            if hp.diff_through_inner_opt:
+                true_objective2 = game_NN.true_objective(net2_, net1)
+            else:
+                net1_ = deepcopy(net1)
+                true_objective2 = game_NN.true_objective(net2_, net1_)
 
             # Grad update for NN without modules like nn.Linear
             grad2 = torch.autograd.grad(true_objective2, net2_.parameters(), create_graph=True)
