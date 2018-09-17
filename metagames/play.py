@@ -1,13 +1,14 @@
+from copy import deepcopy
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from LOLA_DiCE_master.envs import IPD, PD, OSPD, OSIPD
 import numpy as np
 import matplotlib.pyplot as plt
-from copy import deepcopy
+
+from metagames.third_party.LOLA_DiCE.envs import IPD, PD, OSPD, OSIPD
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # device = "cpu"
-
 
 
 class HyParams():
