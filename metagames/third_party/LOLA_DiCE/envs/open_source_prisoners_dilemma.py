@@ -1,6 +1,8 @@
 """
-Iterated Prisoner's dilemma environment.
+Open Source Prisoner's dilemma environment.
 """
+from copy import deepcopy
+
 import gym
 import numpy as np
 import torch
@@ -25,9 +27,10 @@ class OpenSourcePrisonersDilemma(gym.Env):
     def __init__(self, batch_size=1, payout_mat=[[-2,0],[-3,-1]], device=None):
         # self.max_steps = 1
         self.batch_size = batch_size
-        self.payout_mat = np.array(payout_mat)
         self.states = np.array([[0,0],[0,0]])
         self.device = device
+        self.payout_mat = np.array(payout_mat)
+        self.payout_mat_tensor = torch.from_numpy(self.payout_mat).to(self.device).float()
 
         # self.action_space = Tuple([
         #     Discrete(self.NUM_ACTIONS) for _ in range(self.NUM_AGENTS)
@@ -42,17 +45,37 @@ class OpenSourcePrisonersDilemma(gym.Env):
         #
         # self.step_count = None
 
-    def true_objective(self, net1, net2):
+    def true_objective(self, net1, net2, weight=None):
         p1 = torch.sigmoid(net1.forward(net2))
         p2 = torch.sigmoid(net2.forward(net1))
-        # p1 = torch.sigmoid(self.eval_func(net1))
-        # p2 = torch.sigmoid(self.eval_func(net2))
         # create initial laws, transition matrix and rewards:
         outcome_probs = torch.ger(torch.stack([p1, 1 - p1], dim=1).view(-1), torch.stack([p2, 1 - p2], dim=1).view(-1))
-        payout_mat = torch.from_numpy(self.payout_mat).to(self.device).float()
-        objective = (payout_mat * outcome_probs).sum()
+        objective = (self.payout_mat_tensor * outcome_probs).sum()
         return -objective
 
+    def objective_stopgradient_through_own_forward(self, net1, net2):
+        p1 = torch.sigmoid(deepcopy(net1).forward(net2))
+        p2 = torch.sigmoid(net2.forward(net1))
+        # create initial laws, transition matrix and rewards:
+        outcome_probs = torch.ger(torch.stack([p1, 1 - p1], dim=1).view(-1), torch.stack([p2, 1 - p2], dim=1).view(-1))
+        objective = (self.payout_mat_tensor * outcome_probs).sum()
+        return -objective
+
+    def objective_stopgradient_through_opponent(self, net1, net2):
+        p1 = torch.sigmoid(net1.forward(net2))
+        p2 = torch.sigmoid(net2.forward(deepcopy(net1)))
+        # create initial laws, transition matrix and rewards:
+        outcome_probs = torch.ger(torch.stack([p1, 1 - p1], dim=1).view(-1), torch.stack([p2, 1 - p2], dim=1).view(-1))
+        objective = (self.payout_mat_tensor * outcome_probs).sum()
+        return -objective
+
+    def make_weighted_grad_objective(self, weight_self):
+        assert 0 <= weight_self <= 1
+        def objective(net1, net2):
+            out = weight_self * self.objective_stopgradient_through_opponent(net1, net2) \
+                + (1.-weight_self) * self.objective_stopgradient_through_own_forward(net1, net2)
+            return out
+        return objective
 
     # def reset(self):
     #     self.step_count = 0
