@@ -6,11 +6,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
 
 from metagames.third_party.LOLA_DiCE.envs import IPD, PD, OSPD, OSIPD
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 device = "cpu"
-
+# tensor = torch.tensor if device == "cpu" else torch.cuda.FloatTensor
+FloatTensor = torch.FloatTensor
 
 class HyParams():
     def __init__(self):
@@ -18,25 +20,26 @@ class HyParams():
         self.diff_through_inner_opt = True
         self.weight_grad_paths = False
         self.grad_weight_self = 0.
-        self.lr_out = 1. * (1. + self.weight_grad_paths)         # default: 0.2
-        self.lr_in = 0.00001 * (1. + self.weight_grad_paths)          # default: 0.3
+        self.lr_out = 0.1 * (1. + self.weight_grad_paths)
+        self.lr_in = 0.01 * (1. + self.weight_grad_paths)
         # self.optim_algo = torch.optim.Adam
         self.optim_algo = torch.optim.SGD
         self.joint_optim = False    # joint or alternating GD
-        self.n_outer_opt = 20000
-        self.n_inner_opt_range = (1, 1 + 1)
+        self.n_outer_opt = 8000
+        self.n_inner_opt_range = (0, 1 + 1)
 
         # Game
         # Games: PD (1 state), IPD (5 states), OSPD (1 state), OSIPD (5 states)
-        self.game, self.num_states, self.net_type = 'OSPD', 1, 'OppAwareNet'    # 'OppAwareNet', 'NoInputFcNet'
+        self.game, self.num_states, self.net_type = 'OSPD', 1, 'OppAwareNetSubspace'    # 'OppAwareNetSubspace', 'NoInputFcNet'
         self.payout_mat = [[-2.9,0],[-3,-0.1]]
         # self.payout_mat = [[-2,0],[-3,-1]]  # Not implemented for IPD
         # self.gamma = 0.96
 
         # Neural nets
-        self.layer_sizes = [None, 10, 3, 3, self.num_states]    # 50 free params
-        self.init_var = 0.1
-        self.seed = 0
+        self.layer_sizes = [10, 10, self.num_states]    #, 3, self.num_states]
+        # self.biases = True
+        self.init_std = 0.1
+        self.seed = 2
 
         self.plot_progress = False
         self.plot_every_n = self.n_outer_opt // 5.
@@ -49,24 +52,24 @@ print("Hyperparams: \n", exp_name)
 
 
 
-class OppAwareNet(torch.nn.Module):
+class OppAwareNet1stFixed(torch.nn.Module):
     """A feed-forward net with fixed parameters in the 1st layer that takes another net's parameters as input."""
     def __init__(self, diff_seed):
-        super(OppAwareNet, self).__init__()
+        super(OppAwareNet1stFixed, self).__init__()
         # layer_sizes = calc_input_dim(hp.layer_sizes, fixed_layers=(0,))
         layer_sizes = calc_input_dim(hp.layer_sizes, fixed_layers=(0,), bias=False)
-        self.w1 = torch.zeros(layer_sizes[0], layer_sizes[1]).normal_(0, hp.init_var).to(device).requires_grad_()
+        self.w1 = torch.zeros(layer_sizes[0], layer_sizes[1]).normal_(0, hp.init_std).to(device).requires_grad_()
         self.b1 = torch.zeros(layer_sizes[1]).to(device).requires_grad_()
         torch.manual_seed(diff_seed)    # Ensures only higher layers differ between nets
-        self.w2 = torch.nn.Parameter(torch.ones(layer_sizes[1], layer_sizes[2]).normal_(0, hp.init_var))
+        self.w2 = torch.nn.Parameter(torch.ones(layer_sizes[1], layer_sizes[2]).normal_(0, hp.init_std))
         # self.b2 = torch.nn.Parameter(torch.zeros(layer_sizes[2]))
         self.b2 = torch.tensor(torch.zeros(layer_sizes[2])).to(device).requires_grad_()
-        self.w3 = torch.nn.Parameter(torch.zeros(layer_sizes[2], layer_sizes[3]).normal_(0, hp.init_var))
-        # self.b3 = torch.nn.Parameter(torch.zeros(layer_sizes[3]))True
-        self.b3 = torch.tensor(torch.zeros(layer_sizes[3])).to(device).requires_grad_()
-        self.w4 = torch.nn.Parameter(torch.zeros(layer_sizes[3], layer_sizes[4]).normal_(0, hp.init_var))
-        # self.b4 = torch.nn.Parameter(torch.zeros(layer_sizes[4]))
-        self.b4 = torch.tensor(torch.zeros(layer_sizes[4])).to(device).requires_grad_()
+        # self.w3 = torch.nn.Parameter(torch.zeros(layer_sizes[2], layer_sizes[3]).normal_(0, hp.init_std))
+        # # self.b3 = torch.nn.Parameter(torch.zeros(layer_sizes[3]))True
+        # self.b3 = torch.tensor(torch.zeros(layer_sizes[3])).to(device).requires_grad_()
+        # self.w4 = torch.nn.Parameter(torch.zeros(layer_sizes[3], layer_sizes[4]).normal_(0, hp.init_std))
+        # # self.b4 = torch.nn.Parameter(torch.zeros(layer_sizes[4]))
+        # self.b4 = torch.tensor(torch.zeros(layer_sizes[4])).to(device).requires_grad_()
         # self.trainable_params = [self.w2, self.b2, self.w3, self.b3, self.w4, self.b4]
         # self.mask_w1 = torch.FloatTensor(10, 10).uniform_() > 0.8     # bit mask
         self.optimizer = hp.optim_algo(self.parameters(), lr=hp.lr_out)
@@ -78,12 +81,61 @@ class OppAwareNet(torch.nn.Module):
             out = torch.cat((out, param2), dim=0)
         out = out.view(1, -1)
         out = F.leaky_relu(out.mm(self.w1) + self.b1, negative_slope=1/5.5)
-        out = F.leaky_relu(out.mm(self.w2) + self.b2, negative_slope=1/5.5)
-        out = F.leaky_relu(out.mm(self.w3) + self.b3, negative_slope=1/5.5)
-        out =              out.mm(self.w4) + self.b4
+        out = out.mm(self.w2) + self.b2
+        # out = F.leaky_relu(out.mm(self.w3) + self.b3, negative_slope=1/5.5)
+        # out =              out.mm(self.w4) + self.b4
         return out.view(-1)
 
 
+
+
+class OppAwareNetSubspace(torch.nn.Module):
+    """A feed-forward net that takes another net's parameters as input, with parameters trained in a subspace."""
+    def __init__(self, diff_seed):
+        super(OppAwareNetSubspace, self).__init__()
+        LS = hp.layer_sizes
+        n_free_params = LS[0]
+        n_direct_params = sum([(m + hp.biases) * n for (m, n) in zip(hp.layer_sizes[:-1], hp.layer_sizes[1:])])
+        exp_row_norm = np.sqrt(n_direct_params)
+
+        self.subs_params = torch.nn.Parameter(torch.zeros(n_free_params))
+
+        # Initial params remain unchanged; define offset of subspace
+        torch.manual_seed(diff_seed)    # Ensures different init
+        self.w1_init = FloatTensor(LS[0], LS[1]).normal_(0, hp.init_std)
+        self.b1_init = FloatTensor(LS[1]).fill_(0)
+        # self.b1_init = FloatTensor(LS[1]).normal_(0, hp.init_std)
+        self.w2_init = FloatTensor(LS[1], LS[2]).normal_(0, hp.init_std)
+        self.b2_init = FloatTensor(LS[2]).fill_(0)
+        # self.b2_init = FloatTensor(LS[2]).normal_(0, hp.init_std)
+
+        torch.manual_seed(hp.seed)      # Ensures same subspace
+        # Sample a random ~orthonormal matrix consisting these submatrices
+        # TODO: Test column norm
+        self.w1_subspace = FloatTensor(LS[0], LS[0], LS[1]).normal_(0, 1 / exp_row_norm)
+        self.b1_subspace = FloatTensor(LS[0], LS[1]).normal_(0, 1 / exp_row_norm)
+        self.w2_subspace = FloatTensor(LS[0], LS[1], LS[2]).normal_(0, 1 / exp_row_norm)
+        self.b2_subspace = FloatTensor(LS[0], LS[2]).normal_(0, 1 / exp_row_norm)
+
+        self.optimizer = hp.optim_algo(self.parameters(), lr=hp.lr_out)
+        # self.mask_w1 = torch.FloatTensor(10, 10).uniform_() > 0.8     # bit mask
+    def forward(self, net2):
+        # params2_flat = torch.cat([param.view(-1) for param in net2.parameters()])
+        assert len(list(net2.parameters())) == 1
+        # Compute direct params = initial params + subs_params dot "random roughly orthonormal matrix"
+        w1 = self.w1_init + torch.einsum("i,ijk->jk", (self.subs_params, self.w1_subspace))   # requires grad?
+        b1 = self.b1_init + torch.einsum("i,ij->j", (self.subs_params, self.b1_subspace))
+        w2 = self.w2_init + torch.einsum("i,ijk->jk", (self.subs_params, self.w2_subspace))
+        b2 = self.b2_init + torch.einsum("i,ij->j", (self.subs_params, self.b2_subspace))
+
+        # Note initial input is always zero
+        subs_params2 = net2.subs_params
+        out = subs_params2.view(1, -1)
+        out = F.leaky_relu(out.mm(w1) + b1, negative_slope=1/5.5)
+        out = out.mm(w2) + b2
+        # out = F.leaky_relu(out.mm(w3) + self.b3, negative_slope=1/5.5)
+        # out =              out.mm(w4) + self.b4
+        return out.view(-1)
 
 
 def play_LOLA(n_inner_opt):
@@ -96,9 +148,9 @@ def play_LOLA(n_inner_opt):
     scores = []
 
     torch.manual_seed(hp.seed)
-    net1 = str_to_var(hp.net_type)(diff_seed=1).to(device)
+    net1 = name_dict[hp.net_type](diff_seed=1).to(device)
     torch.manual_seed(hp.seed)
-    net2 = str_to_var(hp.net_type)(diff_seed=2).to(device)
+    net2 = name_dict[hp.net_type](diff_seed=2).to(device)
 
     objective = game.make_weighted_grad_objective(hp.grad_weight_self) if hp.weight_grad_paths else game.true_objective
 
@@ -106,8 +158,8 @@ def play_LOLA(n_inner_opt):
 
         # Inner optimization
         for k in range(n_inner_opt):
-            weighted_objective = game.make_weighted_grad_objective(hp.grad_weight_self)
-            true_objective = game.true_objective
+
+
 
             if hp.diff_through_inner_opt:
                 objective2 = objective(net2_, net1)
@@ -149,8 +201,7 @@ def play_LOLA(n_inner_opt):
 
         net2_ = deepcopy(net2).to(device)
         if hp.joint_optim == True:
-            net1_ = deepcopy(net1).to(device)  #TODO(sorenmind): Turns parameters into tensors. Problem
-
+            net1_ = deepcopy(net1).to(device)  #TODO(sorenmind): Turns parameters into tensors. Problem?
         LOLA_step(net1, net2_)
         if hp.joint_optim == False:
             net1_ = deepcopy(net1).to(device)
@@ -244,7 +295,7 @@ def eval_and_print(scores, update, agent1, agent2):
         p1 = [np.round(p.item(), 3) for p in torch.sigmoid(agent1.forward(agent2))]
         p2 = [np.round(p.item(), 3) for p in torch.sigmoid(agent2.forward(agent1))]
         print('update', update, 'score (%.5f,%.5f)' % (score[0], score[1]), 'policy 1:', p1, 'policy 2:', p2,
-              'param 1: %.5f' % np.array(list(agent1.parameters()))[-1][0][:3].item(),
+              # 'param 1: %.5f' % np.array(list(agent1.parameters()))[-1][0][:3].item(),
               'gradnorms x1000: %.4f, %.4f' %(1000 * grad_norm(grad1), 1000 * grad_norm(grad2))
               )
     return scores
@@ -282,9 +333,13 @@ class NoInputFcNet(torch.nn.Module):
         return out
 
 
-def str_to_var(name):
-    name_dict = {'OppAwareNet': OppAwareNet, 'NoInputFcNet': NoInputFcNet, 'SelfOutputNet': SelfOutputNet}
-    return name_dict[name]
+# def str_to_var(name):
+name_dict = {'OppAwareNet1stFixed': OppAwareNet1stFixed,
+             'OppAwareNetSubspace': OppAwareNetSubspace,
+             'NoInputFcNet': NoInputFcNet,
+             'SelfOutputNet': SelfOutputNet}
+    # return name_dict[name]
+
 
 'Create game env'
 if hp.game == 'PD':
@@ -295,8 +350,8 @@ elif hp.game == 'IPD':
     game = IPD(hp.gamma, device=device)
 elif hp.game == 'OSIPD':
     game = OSIPD(hp.gamma, device=device)
+else: raise ValueError('Unknown game')
 
-print('bla')
 
 # plot results:
 if __name__=="__main__":
