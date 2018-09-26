@@ -1,60 +1,150 @@
+#!/usr/bin/env pythonr
+"""Runs agents playing and optimization in a variety of prisoner's dilemma
+type games."""
 from copy import deepcopy
-from pprint import pprint
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 
 from metagames.third_party.LOLA_DiCE.envs import IPD, PD, OSPD, OSIPD
-# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-device = "cpu"
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+# device = "cpu"
+if device == "cpu":
+      from torch import FloatTensor
+else: from torch.cuda import FloatTensor
 # tensor = torch.tensor if device == "cpu" else torch.cuda.FloatTensor
-FloatTensor = torch.FloatTensor
-
-class HyParams():
-    def __init__(self):
-        # Optimization
-        self.diff_through_inner_opt = True
-        self.weight_grad_paths = False
-        self.grad_weight_self = 0.
-        self.lr_out = 0.1 * (1. + self.weight_grad_paths)
-        self.lr_in = 0.01 * (1. + self.weight_grad_paths)
-        # self.optim_algo = torch.optim.Adam
-        self.optim_algo = torch.optim.SGD
-        self.joint_optim = False    # joint or alternating GD
-        self.n_outer_opt = 8000
-        self.n_inner_opt_range = (0, 1 + 1)
-
-        # Game
-        # Games: PD (1 state), IPD (5 states), OSPD (1 state), OSIPD (5 states)
-        self.game, self.num_states, self.net_type = 'OSPD', 1, 'OppAwareNetSubspace'    # 'OppAwareNetSubspace', 'NoInputFcNet'
-        self.payout_mat = [[-2.9,0],[-3,-0.1]]
-        # self.payout_mat = [[-2,0],[-3,-1]]  # Not implemented for IPD
-        # self.gamma = 0.96
-
-        # Neural nets
-        self.layer_sizes = [10, 10, self.num_states]    #, 3, self.num_states]
-        # self.biases = True
-        self.init_std = 0.1
-        self.seed = 2
-
-        self.plot_progress = False
-        self.plot_every_n = self.n_outer_opt // 5.
 
 
-hp = HyParams()
-exp_name = [(key, hp.__dict__[key]) for key in sorted(hp.__dict__)]
-print("Hyperparams: \n", exp_name)
+def parse_args(args=None):
+    """Parse command-line arguments. Some extra args are calculated at the end from the passed-in args.
+    Args:
+        args: A list of argument strings to use instead of sys.argv.
+    Returns:
+        An argparse.Namespace object containing the parsed arguments.
+    """
+    par = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0] if __doc__ else None,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    # Optimization
+    par.add_argument('-dont_diff_through_inner_opt', action='store_true')
+    par.add_argument('-weight_grad_paths', type=int, nargs=2, default=(False, None),
+                     metavar='BOOL, 0<=FLOAT,=1',
+                     help='1st arg: bool to give 0 < weight < 1 to gradient through self and 1-weight \ '
+                          'through opponent. 2nd arg: the weight.')
+    par.add_argument('-lr_out', type=float, default=0.1, help='Learning rate for regular optimization (outer loop)')
+    par.add_argument('-lr_in', type=float, default=0.01, help='Learning rate for LOLA optimization (inner loop)')
+    par.add_argument('-optim_algo', default='SGD', metavar='SGD or Adam')
+    par.add_argument('-joint_optim', action='store_true', default=False, help='Joint descent of all agents')
+    par.add_argument('-n_outer_opt', type=int, default=10000, help='N training steps')
+    par.add_argument('-n_inner_opt_range', nargs=2, type=int, metavar=('LOW', 'HIGH'), default=(0, 1),
+                     help='(Non-inclusive) range of LOLA inner opt steps. Each one will be plotted.')
+
+    # Game env
+    par.add_argument('-game', type=str, default='OSPD', help='Games: PD, IPD, OSPD, OSIPD. OS stands for open-source.')
+    par.add_argument('-net-type', default='OppAwareNetSubspace', help='OppAwareNetSubspace or OppAwareNet1stFixed')
+    par.add_argument('-DD_val', type=float, default=-2.9, help='Reward for mutual defection in PD. -2 is typical.')
+    par.add_argument('-CC_val', type=float, default=-0.1, help='Reward for mutual cooperation in PD. -1 is typical.')
+    par.add_argument('-gamma', type=float, default=0.96, help='discount factor for iterated games')
+
+    # Neural nets
+    par.add_argument('-layer-sizes', nargs='+', type=int, default=(10, 10), help='input and hidden layers')
+    par.add_argument('-init-std', type=float, default=0.1, help='Initialization std for net weights')
+    par.add_argument('-seed', type=int, default=0)
+    par.add_argument('-biases', type=bool, default=True, help='[NOT IMPLEMENTED] Makes nets without biases')
+
+    # Other
+    par.add_argument('-plot-progress', action='store_true', help='Plot scores during training AND after')
+    par.add_argument('-plot-every-n', type=int, help='If plotting progress, plot every N steps')
+
+    args = par.parse_args(args)
+
+    # Adjust learning rate
+    if args.weight_grad_paths[0]:
+        args.lr_out *= 2
+        args.lr_in *= 2
+
+    args.payout_mat = [[float(args.DD_val), 0.], [-3, float(args.CC_val)]]
+    args.optim_algo = str_to_var(args.optim_algo)
+    args.num_states = str_to_var((args.game, 'num_states'))
+    args.layer_sizes = list(args.layer_sizes) + [args.num_states]
+
+    # Create game env
+    if args.game == 'PD':
+        args.game = PD(payout_mat=args.payout_mat, device=device)
+    elif args.game == 'OSPD':
+        args.game = OSPD(payout_mat=args.payout_mat, device=device)
+    elif args.game == 'IPD':
+        args.game = IPD(args.gamma, device=device)
+    elif args.game == 'OSIPD':
+        args.game = OSIPD(args.gamma, device=device)
+    else:
+        raise ValueError('Unknown game')
+    return args
 
 
+def play_LOLA(n_inner_opt, hp):
+    """Create two agents, play the game, return score        if update == 500:
+            x = 1
+            passs over time.
+    :param n_inner_opt: number of steps opponent takes in inner loop for LOLA.
+    """
+    print("start iterations with", n_inner_opt, "lookaheads:")
+    scores = []
+
+    torch.manual_seed(hp.seed)
+    net1 = str_to_var(hp.net_type)(hp, diff_seed=1).to(device)
+    torch.manual_seed(hp.seed)
+    net2 = str_to_var(hp.net_type)(hp, diff_seed=2).to(device)
+
+    if hp.weight_grad_paths[0]:
+        objective = hp.game.make_weighted_grad_objective(hp.grad_weight_self[1])
+    else:
+        objective = hp.game.true_objective
+
+    def LOLA_step(net1, net2_):
+        # Inner optimization
+        for k in range(n_inner_opt):
+            if hp.dont_diff_through_inner_opt:
+                net1_ = deepcopy(net1)
+                objective2 = objective(net2_, net1_)
+            else:
+                objective2 = objective(net2_, net1)
+
+            # Grad update for NN without modules like nn.Linear
+            grad2 = torch.autograd.grad(objective2, net2_.parameters(), create_graph=True)
+            assert len(list(net2_.parameters())) == len(net2_._parameters.items()) == len(grad2) # Ensure no params are missed
+            for i, (param_name, param) in enumerate(net2_._parameters.items()):
+                net2_._parameters[param_name] = param - hp.lr_in * grad2[i]
+
+        # Outer optimization
+        objective1 = objective(net1, net2_)
+        net1.optimizer.zero_grad()
+        objective1.backward()
+        net1.optimizer.step()
+
+    # SGD loop
+    for update in range(hp.n_outer_opt):
+        scores = eval_and_print(hp, scores, update, net1, net2)
+        if hp.plot_progress:
+            plot_progress(scores, n_inner_opt, hp.n_outer_opt, hp.plot_every_n, update)
+        net2_ = deepcopy(net2).to(device)
+        if hp.joint_optim == True:
+            net1_ = deepcopy(net1).to(device)
+        LOLA_step(net1, net2_)
+        if hp.joint_optim == False:
+            net1_ = deepcopy(net1).to(device)
+        LOLA_step(net2, net1_)
+    return scores
 
 
 class OppAwareNet1stFixed(torch.nn.Module):
     """A feed-forward net with fixed parameters in the 1st layer that takes another net's parameters as input."""
-    def __init__(self, diff_seed):
+    def __init__(self, hp, diff_seed):
         super(OppAwareNet1stFixed, self).__init__()
         # layer_sizes = calc_input_dim(hp.layer_sizes, fixed_layers=(0,))
         layer_sizes = calc_input_dim(hp.layer_sizes, fixed_layers=(0,), bias=False)
@@ -87,11 +177,9 @@ class OppAwareNet1stFixed(torch.nn.Module):
         return out.view(-1)
 
 
-
-
 class OppAwareNetSubspace(torch.nn.Module):
     """A feed-forward net that takes another net's parameters as input, with parameters trained in a subspace."""
-    def __init__(self, diff_seed):
+    def __init__(self, hp, diff_seed):
         super(OppAwareNetSubspace, self).__init__()
         LS = hp.layer_sizes
         n_free_params = LS[0]
@@ -119,6 +207,7 @@ class OppAwareNetSubspace(torch.nn.Module):
 
         self.optimizer = hp.optim_algo(self.parameters(), lr=hp.lr_out)
         # self.mask_w1 = torch.FloatTensor(10, 10).uniform_() > 0.8     # bit mask
+
     def forward(self, net2):
         # params2_flat = torch.cat([param.view(-1) for param in net2.parameters()])
         assert len(list(net2.parameters())) == 1
@@ -136,81 +225,6 @@ class OppAwareNetSubspace(torch.nn.Module):
         # out = F.leaky_relu(out.mm(w3) + self.b3, negative_slope=1/5.5)
         # out =              out.mm(w4) + self.b4
         return out.view(-1)
-
-
-def play_LOLA(n_inner_opt):
-    """Create two agents, play the game, return score        if update == 500:
-            x = 1
-            passs over time.
-    :param n_inner_opt: number of steps opponent takes in inner loop for LOLA.
-    """
-    print("start iterations with", n_inner_opt, "lookaheads:")
-    scores = []
-
-    torch.manual_seed(hp.seed)
-    net1 = name_dict[hp.net_type](diff_seed=1).to(device)
-    torch.manual_seed(hp.seed)
-    net2 = name_dict[hp.net_type](diff_seed=2).to(device)
-
-    objective = game.make_weighted_grad_objective(hp.grad_weight_self) if hp.weight_grad_paths else game.true_objective
-
-    def LOLA_step(net1, net2_):
-
-        # Inner optimization
-        for k in range(n_inner_opt):
-
-
-
-            if hp.diff_through_inner_opt:
-                objective2 = objective(net2_, net1)
-            else:
-                net1_ = deepcopy(net1)
-                objective2 = objective(net2_, net1_)
-
-            # Grad update for NN without modules like nn.Linear
-            grad2 = torch.autograd.grad(objective2, net2_.parameters(), create_graph=True)
-            assert len(list(net2_.parameters())) == len(net2_._parameters.items()) == len(grad2) # Ensure no params are missed
-            for i, (param_name, param) in enumerate(net2_._parameters.items()):
-                net2_._parameters[param_name] = param - hp.lr_in * grad2[i]
-
-            # Grad update for NN with only modules
-            # grad2 = {}
-            # for i, (mod_name, mod) in enumerate(net2_._modules.items()):
-            #     # list(mod._parameters.values())
-            #     grad2[mod_name] = torch.autograd.grad(true_objective2, mod.parameters(), create_graph=True)
-            # for i, (mod_name, mod) in enumerate(net2_._modules.items()):
-            #     # Empty:
-            #     name_param_list2 = [(name, param) for (name, param) in mod._parameters.items() if param is not None]
-            #     for i, (param_name, param) in enumerate(name_param_list2):
-            #         mod._parameters[param_name] = param - hp.lr_in * grad2[mod_name][i]
-
-
-
-        # Outer optimization
-        objective1 = objective(net1, net2_)
-        net1.optimizer.zero_grad()
-        objective1.backward()
-        net1.optimizer.step()
-
-
-    # SGD loop
-    for update in range(hp.n_outer_opt):
-        scores = eval_and_print(scores, update, net1, net2)
-        if hp.plot_progress:
-            plot_progress(scores, n_inner_opt, update)
-
-        net2_ = deepcopy(net2).to(device)
-        if hp.joint_optim == True:
-            net1_ = deepcopy(net1).to(device)  #TODO(sorenmind): Turns parameters into tensors. Problem?
-        LOLA_step(net1, net2_)
-        if hp.joint_optim == False:
-            net1_ = deepcopy(net1).to(device)
-        LOLA_step(net2, net1_)
-
-    return scores
-
-
-
 
 
 
@@ -244,19 +258,19 @@ def get_net_params_dict(net):
 
 
 
-def plot_progress(joint_scores, n_inner_opt, update, line=None):
+def plot_progress(joint_scores, n_inner_opt, n_outer_opt, plot_every_n, update):
     colors = ['b','c','m','r','y','g']
     if update == 0:
         plt.ion()
         plt.xlabel('grad steps')
         plt.ylabel('player scores')
-        plt.xlim([0,hp.n_outer_opt])
+        plt.xlim([0, n_outer_opt])
         # fig = plt.figure()
         # ax = fig.add_subplot(111)
         # plt.legend()
         # ax.plot(joint_scores, colors[n_inner_opt_range], label=str(n_inner_opt_range) + " lookaheads")
 
-    if update % hp.plot_every_n == 0:
+    if update % plot_every_n == 0:
         plt.plot(joint_scores, colors[n_inner_opt], label=str(n_inner_opt) + " lookaheads")
         # plt.show(block=False)
         plt.draw()
@@ -283,14 +297,14 @@ def grad_norm(grad):
     return torch.norm(flat_grad)
 
 
-def eval_and_print(scores, update, agent1, agent2):
+def eval_and_print(hp, scores, update, agent1, agent2):
     # evaluate:
-    score = (-game.true_objective(agent1, agent2), -game.true_objective(agent2, agent1))
+    score = (-hp.game.true_objective(agent1, agent2), -hp.game.true_objective(agent2, agent1))
     scores.append(score)
 
     # print
     if update % 10 == 0:
-        [grad1, grad2] = [torch.autograd.grad(game.true_objective(agent1, agent2), agent1.parameters())
+        [grad1, grad2] = [torch.autograd.grad(hp.game.true_objective(agent1, agent2), agent1.parameters())
                           for agent1, agent2 in [[agent1, agent2], [agent2, agent1]]]
         p1 = [np.round(p.item(), 3) for p in torch.sigmoid(agent1.forward(agent2))]
         p2 = [np.round(p.item(), 3) for p in torch.sigmoid(agent2.forward(agent1))]
@@ -303,7 +317,7 @@ def eval_and_print(scores, update, agent1, agent2):
 
 class SelfOutputNet(torch.nn.Module):
     """Outputs its own parameters (for non-open source IPD)"""
-    def __init__(self, diff_seed=None):
+    def __init__(self, hp, diff_seed=None):
         super(SelfOutputNet, self).__init__()
         self.theta = torch.nn.Parameter(torch.zeros(hp.num_states, requires_grad=True))
         self.optimizer = hp.optim_algo(self.parameters(), lr=hp.lr_out)
@@ -313,7 +327,7 @@ class SelfOutputNet(torch.nn.Module):
 
 class NoInputFcNet(torch.nn.Module):
     """A feed-forward net that doesn't see its opponent."""
-    def __init__(self, diff_seed=None):
+    def __init__(self, hp, diff_seed=None):
         super(NoInputFcNet, self).__init__()
         torch.manual_seed(diff_seed)
         self.fc1 = torch.nn.Linear(1, hp.layer_sizes[1], bias=True)
@@ -333,41 +347,51 @@ class NoInputFcNet(torch.nn.Module):
         return out
 
 
-# def str_to_var(name):
-name_dict = {'OppAwareNet1stFixed': OppAwareNet1stFixed,
-             'OppAwareNetSubspace': OppAwareNetSubspace,
-             'NoInputFcNet': NoInputFcNet,
-             'SelfOutputNet': SelfOutputNet}
-    # return name_dict[name]
+def str_to_var(name):
+    """Maps some strings passed in as cmd line arguments to some variables."""
+    name_dict = {'OppAwareNet1stFixed': OppAwareNet1stFixed,
+                 'OppAwareNetSubspace': OppAwareNetSubspace,
+                 'NoInputFcNet': NoInputFcNet,
+                 'SelfOutputNet': SelfOutputNet,
+                 'SGD': torch.optim.SGD,
+                 'Adam': torch.optim.Adam,
+                 ('PD', 'num_states'): 1,
+                 ('OSPD', 'num_states'): 1,
+                 ('IPD', 'num_states'): 5,
+                 ('OSIPD', 'num_states'): 5}
+    return name_dict[name]
 
 
-'Create game env'
-if hp.game == 'PD':
-    game = PD(payout_mat=hp.payout_mat, device=device)
-elif hp.game == 'OSPD':
-    game = OSPD(payout_mat=hp.payout_mat, device=device)
-elif hp.game == 'IPD':
-    game = IPD(hp.gamma, device=device)
-elif hp.game == 'OSIPD':
-    game = OSIPD(hp.gamma, device=device)
-else: raise ValueError('Unknown game')
+def main(hp=None):
+    """Run script.
 
+    Args:
+        hp: A list of argument strings to use instead of sys.argv.
+    """
 
-# plot results:
-if __name__=="__main__":
+    hp = parse_args(hp)
+    # hp = HyParams()
+    exp_name = [(key, hp.__dict__[key]) for key in sorted(hp.__dict__)]
+    print("Hyperparams: \n", exp_name)
 
     colors = ['b','c','m','r','y','g']
 
     for i in range(*hp.n_inner_opt_range):
         torch.manual_seed(hp.seed)
-        scores = np.array(play_LOLA(i))
-        scores_copy = scores
+        scores = np.array(play_LOLA(i, hp))
         plt.plot(scores, colors[i], label=str(i)+" lookaheads")
 
     plt.legend()
     plt.xlabel('grad steps')
     plt.ylabel('joint score')
     plt.show(block=True)
+
+
+# plot results:
+if __name__== "__main__":
+    main()
+
+
 
 
 
@@ -399,3 +423,47 @@ if __name__=="__main__":
     #         if not layer == self.layers[-1]:
     #             out = F.relu(out)
     #     return out
+
+
+
+# class HyParams():
+#     def __init__(self):
+#         # Optimization
+#         self.diff_through_inner_opt = True
+#         self.weight_grad_paths = False
+#         self.grad_weight_self = 0.
+#         self.lr_out = 0.1 * (1. + self.weight_grad_paths)
+#         self.lr_in = 0.01 * (1. + self.weight_grad_paths)
+#         # self.optim_algo = torch.optim.Adam
+#         self.optim_algo = torch.optim.SGD
+#         self.joint_optim = False    # joint or alternating GD
+#         self.n_outer_opt = 8000
+#         self.n_inner_opt_range = (0, 1 + 1)
+#
+#         # Game
+#         # Games: PD (1 state), IPD (5 states), OSPD (1 state), OSIPD (5 states)
+#         self.game, self.num_states, self.net_type = 'OSPD', 1, 'OppAwareNetSubspace'    # 'OppAwareNetSubspace', 'NoInputFcNet'
+#         self.payout_mat = [[-2.9,0],[-3,-0.1]]
+#         # self.payout_mat = [[-2,0],[-3,-1]]  # Not implemented for IPD
+#         # self.gamma = 0.96
+#
+#         # Neural nets
+#         self.layer_sizes = [10, 10, self.num_states]
+#         # self.biases = True
+#         self.init_std = 0.1
+#         self.seed = 2
+#
+#         self.plot_progress = False
+#         self.plot_every_n = self.n_outer_opt // 5.
+
+
+# Grad update for NN with only modules
+# grad2 = {}
+# for i, (mod_name, mod) in enumerate(net2_._modules.items()):
+#     # list(mod._parameters.values())
+#     grad2[mod_name] = torch.autograd.grad(true_objective2, mod.parameters(), create_graph=True)
+# for i, (mod_name, mod) in enumerate(net2_._modules.items()):
+#     # Empty:
+#     name_param_list2 = [(name, param) for (name, param) in mod._parameters.items() if param is not None]
+#     for i, (param_name, param) in enumerate(name_param_list2):
+#         mod._parameters[param_name] = param - hp.lr_in * grad2[mod_name][i]
