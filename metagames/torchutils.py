@@ -12,7 +12,7 @@ def differentiable_gradient_step(module, loss, step_size, inplace=False):
             A `torch.nn.Module`.
         loss: The loss to minimize.
         step_size: The gradient descent step size.
-        inplace: If true, modifies `values` in place. Otherwise, creates and
+        inplace: If true, modifies `module` in place. Otherwise, creates and
             returns a copy.
 
     Returns:
@@ -51,7 +51,7 @@ def differentiable_gradient_descent(module, loss_fn, num_steps, step_size, inpla
             Takes `module` as an argument and returns a tensor.
         num_steps: Number of gradient descent steps to apply.
         step_size: The gradient descent step size.
-        inplace: If true, modifies `values` in place. Otherwise, creates and
+        inplace: If true, modifies `module` in place. Otherwise, creates and
             returns a copy.
 
     Returns:
