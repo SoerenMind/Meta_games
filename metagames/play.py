@@ -1,15 +1,17 @@
 #!/usr/bin/env pythonr
 """Runs agents playing and optimization in a variety of prisoner's dilemma
 type games."""
+import argparse
 from copy import deepcopy
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
-import matplotlib.pyplot as plt
-import argparse
 
 from metagames.third_party.LOLA_DiCE.envs import IPD, PD, OSPD, OSIPD
+from metagames import torchutils
+
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 # device = "cpu"
 if device == "cpu":
@@ -107,19 +109,19 @@ def play_LOLA(n_inner_opt, hp):
         objective = hp.game.true_objective
 
     def LOLA_step(net1, net2_):
-        # Inner optimization
-        for k in range(n_inner_opt):
-            if hp.dont_diff_through_inner_opt:
-                net1_ = deepcopy(net1)
-                objective2 = objective(net2_, net1_)
-            else:
-                objective2 = objective(net2_, net1)
+        if hp.dont_diff_through_inner_opt:
+            net1_ = deepcopy(net1)
+        else:
+            net1_ = net1
 
-            # Grad update for NN without modules like nn.Linear
-            grad2 = torch.autograd.grad(objective2, net2_.parameters(), create_graph=True)
-            assert len(list(net2_.parameters())) == len(net2_._parameters.items()) == len(grad2) # Ensure no params are missed
-            for i, (param_name, param) in enumerate(net2_._parameters.items()):
-                net2_._parameters[param_name] = param - hp.lr_in * grad2[i]
+        def loss_fn(net):
+            return objective(net, net1_)
+
+        net2_ = torchutils.differentiable_gradient_descent(
+            net2_,
+            loss_fn,
+            num_steps=n_inner_opt,
+            step_size=hp.lr_in, inplace=False)
 
         # Outer optimization
         objective1 = objective(net1, net2_)
@@ -132,12 +134,12 @@ def play_LOLA(n_inner_opt, hp):
         scores = eval_and_print(hp, scores, update, net1, net2)
         if hp.plot_progress:
             plot_progress(scores, n_inner_opt, hp.n_outer_opt, hp.plot_every_n, update)
-        net2_ = deepcopy(net2).to(device)
-        if hp.joint_optim == True:
+
+        if hp.joint_optim:
             net1_ = deepcopy(net1).to(device)
-        LOLA_step(net1, net2_)
-        if hp.joint_optim == False:
-            net1_ = deepcopy(net1).to(device)
+        else:
+            net1_ = net1
+        LOLA_step(net1, net2)
         LOLA_step(net2, net1_)
     return scores
 
