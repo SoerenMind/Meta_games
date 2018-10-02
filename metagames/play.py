@@ -1,19 +1,19 @@
 #!/usr/bin/env pythonr
 """Runs agents playing and optimization in a variety of prisoner's dilemma
 type games."""
-import argparse
 from copy import deepcopy
+import datetime
+import os
 
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.nn.functional as F
+import numpy as np
+import matplotlib.pyplot as plt
+import argparse
 
 from metagames.third_party.LOLA_DiCE.envs import IPD, PD, OSPD, OSIPD
-from metagames import torchutils
-
-device = "cuda:0" if torch.cuda.is_available() else "cpu"
-# device = "cpu"
+# device = "cuda:0" if torch.cuda.is_available() else "cpu"
+device = "cpu"
 if device == "cpu":
       from torch import FloatTensor
 else: from torch.cuda import FloatTensor
@@ -33,35 +33,39 @@ def parse_args(args=None):
     )
 
     # Optimization
-    par.add_argument('-dont_diff_through_inner_opt', action='store_true')
-    par.add_argument('-weight_grad_paths', type=int, nargs=2, default=(False, None),
+    par.add_argument('--dont-diff-through-inner-opt', action='store_true')
+    par.add_argument('--weight-grad-paths', type=int, nargs=2, default=(False, None),
                      metavar='BOOL, 0<=FLOAT,=1',
                      help='1st arg: bool to give 0 < weight < 1 to gradient through self and 1-weight \ '
                           'through opponent. 2nd arg: the weight.')
-    par.add_argument('-lr_out', type=float, default=0.1, help='Learning rate for regular optimization (outer loop)')
-    par.add_argument('-lr_in', type=float, default=0.01, help='Learning rate for LOLA optimization (inner loop)')
-    par.add_argument('-optim_algo', default='SGD', metavar='SGD or Adam')
-    par.add_argument('-joint_optim', action='store_true', default=False, help='Joint descent of all agents')
-    par.add_argument('-n_outer_opt', type=int, default=10000, help='N training steps')
-    par.add_argument('-n_inner_opt_range', nargs=2, type=int, metavar=('LOW', 'HIGH'), default=(0, 1),
+    par.add_argument('--lr-out', type=float, default=0.1, help='Learning rate for regular optimization (outer loop)')
+    par.add_argument('--lr-in', type=float, default=0.01, help='Learning rate for LOLA optimization (inner loop)')
+    par.add_argument('--optim-algo', default='SGD', metavar='SGD or Adam')
+    par.add_argument('--joint-optim', action='store_true', default=False, help='Joint descent of all agents')
+    par.add_argument('--n-outer-opt', type=int, default=10000, help='N training steps')
+    par.add_argument('--n-inner-opt-range', nargs=2, type=int, metavar=('LOW', 'HIGH'), default=(0, 2),
                      help='(Non-inclusive) range of LOLA inner opt steps. Each one will be plotted.')
 
     # Game env
-    par.add_argument('-game', type=str, default='OSPD', help='Games: PD, IPD, OSPD, OSIPD. OS stands for open-source.')
-    par.add_argument('-net-type', default='OppAwareNetSubspace', help='OppAwareNetSubspace or OppAwareNet1stFixed')
-    par.add_argument('-DD_val', type=float, default=-2.9, help='Reward for mutual defection in PD. -2 is typical.')
-    par.add_argument('-CC_val', type=float, default=-0.1, help='Reward for mutual cooperation in PD. -1 is typical.')
-    par.add_argument('-gamma', type=float, default=0.96, help='discount factor for iterated games')
+    par.add_argument('--game', type=str, default='OSPD', help='Games: PD, IPD, OSPD, OSIPD. OS stands for open-source.')
+    par.add_argument('--net-type', default='OppAwareNetSubspace', help='OppAwareNetSubspace or OppAwareNet1stFixed')
+    par.add_argument('--DD-val', type=float, default=-2.9, help='Reward for mutual defection in PD. -2 is typical.')
+    par.add_argument('--CC-val', type=float, default=-0.1, help='Reward for mutual cooperation in PD. -1 is typical.')
+    par.add_argument('--gamma', type=float, default=0.96, help='discount factor for iterated games')
 
     # Neural nets
-    par.add_argument('-layer-sizes', nargs='+', type=int, default=(10, 10), help='input and hidden layers')
-    par.add_argument('-init-std', type=float, default=0.1, help='Initialization std for net weights')
-    par.add_argument('-seed', type=int, default=0)
-    par.add_argument('-biases', type=bool, default=True, help='[NOT IMPLEMENTED] Makes nets without biases')
+    par.add_argument('--layer-sizes', nargs='+', type=int, default=(10, 10), help='input and hidden layers')
+    par.add_argument('--init-std', type=float, default=0.1, help='Initialization std for net weights')
+    par.add_argument('--seed', type=int, default=0)
+    par.add_argument('--biases', type=int, default=1, choices=[0, 1], help='Makes net without biases')
+    par.add_argument('--biases-init', choices=['-1', '0', '1', 'normal'], default='normal', help='initialize biases to...')
+    # TODO(sorenmind): remove
+    par.add_argument('--layers-wo-bias', nargs='+', type=int, help='List of layer numbers without biases. Starts at 1!')
 
     # Other
-    par.add_argument('-plot-progress', action='store_true', help='Plot scores during training AND after')
-    par.add_argument('-plot-every-n', type=int, help='If plotting progress, plot every N steps')
+    par.add_argument('--exp-group-name', default='no_name')
+    par.add_argument('--plot-progress', action='store_true', help='Plot scores during training AND after')
+    par.add_argument('--plot-every-n', type=int, help='If plotting progress, plot every N steps')
 
     args = par.parse_args(args)
 
@@ -74,18 +78,8 @@ def parse_args(args=None):
     args.optim_algo = str_to_var(args.optim_algo)
     args.num_states = str_to_var((args.game, 'num_states'))
     args.layer_sizes = list(args.layer_sizes) + [args.num_states]
+    args.start_time = str(datetime.datetime.now())[:-10]
 
-    # Create game env
-    if args.game == 'PD':
-        args.game = PD(payout_mat=args.payout_mat, device=device)
-    elif args.game == 'OSPD':
-        args.game = OSPD(payout_mat=args.payout_mat, device=device)
-    elif args.game == 'IPD':
-        args.game = IPD(args.gamma, device=device)
-    elif args.game == 'OSIPD':
-        args.game = OSIPD(args.gamma, device=device)
-    else:
-        raise ValueError('Unknown game')
     return args
 
 
@@ -98,30 +92,30 @@ def play_LOLA(n_inner_opt, hp):
     print("start iterations with", n_inner_opt, "lookaheads:")
     scores = []
 
-    torch.manual_seed(hp.seed)
-    net1 = str_to_var(hp.net_type)(hp, diff_seed=1).to(device)
-    torch.manual_seed(hp.seed)
-    net2 = str_to_var(hp.net_type)(hp, diff_seed=2).to(device)
+    game = get_game(hp)
+
+    net1 = str_to_var(hp.net_type)(hp, diff_seed=hp.seed + 1).to(device)
+    net2 = str_to_var(hp.net_type)(hp, diff_seed=hp.seed + 2).to(device)
 
     if hp.weight_grad_paths[0]:
-        objective = hp.game.make_weighted_grad_objective(hp.grad_weight_self[1])
+        objective = game.make_weighted_grad_objective(hp.grad_weight_self[1])
     else:
-        objective = hp.game.true_objective
+        objective = game.true_objective
 
     def LOLA_step(net1, net2_):
-        if hp.dont_diff_through_inner_opt:
-            net1_ = deepcopy(net1)
-        else:
-            net1_ = net1
+        # Inner optimization
+        for k in range(n_inner_opt):
+            if hp.dont_diff_through_inner_opt:
+                net1_ = deepcopy(net1)
+                objective2 = objective(net2_, net1_)
+            else:
+                objective2 = objective(net2_, net1)
 
-        def loss_fn(net):
-            return objective(net, net1_)
-
-        net2_ = torchutils.differentiable_gradient_descent(
-            net2_,
-            loss_fn,
-            num_steps=n_inner_opt,
-            step_size=hp.lr_in, inplace=False)
+            # Grad update for NN without modules like nn.Linear
+            grad2 = torch.autograd.grad(objective2, net2_.parameters(), create_graph=True)
+            assert len(list(net2_.parameters())) == len(net2_._parameters.items()) == len(grad2) # Ensure no params are missed
+            for i, (param_name, param) in enumerate(net2_._parameters.items()):
+                net2_._parameters[param_name] = param - hp.lr_in * grad2[i]
 
         # Outer optimization
         objective1 = objective(net1, net2_)
@@ -131,52 +125,17 @@ def play_LOLA(n_inner_opt, hp):
 
     # SGD loop
     for update in range(hp.n_outer_opt):
-        scores = eval_and_print(hp, scores, update, net1, net2)
+        scores = eval_and_print(game, scores, update, net1, net2)
         if hp.plot_progress:
             plot_progress(scores, n_inner_opt, hp.n_outer_opt, hp.plot_every_n, update)
-
-        if hp.joint_optim:
+        net2_ = deepcopy(net2).to(device)
+        if hp.joint_optim == True:
             net1_ = deepcopy(net1).to(device)
-        else:
-            net1_ = net1
-        LOLA_step(net1, net2)
+        LOLA_step(net1, net2_)
+        if hp.joint_optim == False:
+            net1_ = deepcopy(net1).to(device)
         LOLA_step(net2, net1_)
     return scores
-
-
-class OppAwareNet1stFixed(torch.nn.Module):
-    """A feed-forward net with fixed parameters in the 1st layer that takes another net's parameters as input."""
-    def __init__(self, hp, diff_seed):
-        super(OppAwareNet1stFixed, self).__init__()
-        # layer_sizes = calc_input_dim(hp.layer_sizes, fixed_layers=(0,))
-        layer_sizes = calc_input_dim(hp.layer_sizes, fixed_layers=(0,), bias=False)
-        self.w1 = torch.zeros(layer_sizes[0], layer_sizes[1]).normal_(0, hp.init_std).to(device).requires_grad_()
-        self.b1 = torch.zeros(layer_sizes[1]).to(device).requires_grad_()
-        torch.manual_seed(diff_seed)    # Ensures only higher layers differ between nets
-        self.w2 = torch.nn.Parameter(torch.ones(layer_sizes[1], layer_sizes[2]).normal_(0, hp.init_std))
-        # self.b2 = torch.nn.Parameter(torch.zeros(layer_sizes[2]))
-        self.b2 = torch.tensor(torch.zeros(layer_sizes[2])).to(device).requires_grad_()
-        # self.w3 = torch.nn.Parameter(torch.zeros(layer_sizes[2], layer_sizes[3]).normal_(0, hp.init_std))
-        # # self.b3 = torch.nn.Parameter(torch.zeros(layer_sizes[3]))True
-        # self.b3 = torch.tensor(torch.zeros(layer_sizes[3])).to(device).requires_grad_()
-        # self.w4 = torch.nn.Parameter(torch.zeros(layer_sizes[3], layer_sizes[4]).normal_(0, hp.init_std))
-        # # self.b4 = torch.nn.Parameter(torch.zeros(layer_sizes[4]))
-        # self.b4 = torch.tensor(torch.zeros(layer_sizes[4])).to(device).requires_grad_()
-        # self.trainable_params = [self.w2, self.b2, self.w3, self.b3, self.w4, self.b4]
-        # self.mask_w1 = torch.FloatTensor(10, 10).uniform_() > 0.8     # bit mask
-        self.optimizer = hp.optim_algo(self.parameters(), lr=hp.lr_out)
-    def forward(self, net2):
-        out = torch.empty(0,requires_grad=True).to(device)
-        # Concatenate parameters of layer [1:]
-        for param2 in list(net2.parameters()):
-            param2 = param2.view(-1)
-            out = torch.cat((out, param2), dim=0)
-        out = out.view(1, -1)
-        out = F.leaky_relu(out.mm(self.w1) + self.b1, negative_slope=1/5.5)
-        out = out.mm(self.w2) + self.b2
-        # out = F.leaky_relu(out.mm(self.w3) + self.b3, negative_slope=1/5.5)
-        # out =              out.mm(self.w4) + self.b4
-        return out.view(-1)
 
 
 class OppAwareNetSubspace(torch.nn.Module):
@@ -191,21 +150,20 @@ class OppAwareNetSubspace(torch.nn.Module):
         self.subs_params = torch.nn.Parameter(torch.zeros(n_free_params))
 
         # Initial params remain unchanged; define offset of subspace
-        torch.manual_seed(diff_seed)    # Ensures different init
+        torch.manual_seed(diff_seed)    # Ensures different init for net
         self.w1_init = FloatTensor(LS[0], LS[1]).normal_(0, hp.init_std)
-        self.b1_init = FloatTensor(LS[1]).fill_(0)
-        # self.b1_init = FloatTensor(LS[1]).normal_(0, hp.init_std)
+        self.b1_init = FloatTensor(LS[1])
         self.w2_init = FloatTensor(LS[1], LS[2]).normal_(0, hp.init_std)
-        self.b2_init = FloatTensor(LS[2]).fill_(0)
-        # self.b2_init = FloatTensor(LS[2]).normal_(0, hp.init_std)
+        self.b2_init = FloatTensor(LS[2])
+        init_biases([self.b1_init, self.b2_init], hp)
 
         torch.manual_seed(hp.seed)      # Ensures same subspace
-        # Sample a random ~orthonormal matrix consisting these submatrices
-        # TODO: Test column norm
+        # Sample a random ~orthonormal matrix consisting of the following submatrices
         self.w1_subspace = FloatTensor(LS[0], LS[0], LS[1]).normal_(0, 1 / exp_row_norm)
-        self.b1_subspace = FloatTensor(LS[0], LS[1]).normal_(0, 1 / exp_row_norm)
+        self.b1_subspace = FloatTensor(LS[0], LS[1])
         self.w2_subspace = FloatTensor(LS[0], LS[1], LS[2]).normal_(0, 1 / exp_row_norm)
-        self.b2_subspace = FloatTensor(LS[0], LS[2]).normal_(0, 1 / exp_row_norm)
+        self.b2_subspace = FloatTensor(LS[0], LS[2])
+        init_bias_subspaces([self.b1_subspace, self.b2_subspace], hp, exp_row_norm)
 
         self.optimizer = hp.optim_algo(self.parameters(), lr=hp.lr_out)
         # self.mask_w1 = torch.FloatTensor(10, 10).uniform_() > 0.8     # bit mask
@@ -227,6 +185,48 @@ class OppAwareNetSubspace(torch.nn.Module):
         # out = F.leaky_relu(out.mm(w3) + self.b3, negative_slope=1/5.5)
         # out =              out.mm(w4) + self.b4
         return out.view(-1)
+
+
+class OppAwareNet1stFixed(torch.nn.Module):
+    """A feed-forward net with fixed parameters in the 1st layer that takes another net's parameters as input."""
+    # TODO(sorenmind): Doesn't use hyperparams affecting biases
+    def __init__(self, hp, diff_seed):
+        super(OppAwareNet1stFixed, self).__init__()
+        # layer_sizes = calc_input_dim(hp.layer_sizes, fixed_layers=(0,))
+        layer_sizes = calc_input_dim(hp.layer_sizes, fixed_layers=(0,), bias=False)
+        torch.manual_seed(hp.seed)
+        # TODO(sorenmind): Make tensors parameters again
+        self.w1 = torch.zeros(layer_sizes[0], layer_sizes[1]).normal_(0, hp.init_std).to(device).requires_grad_()
+        self.b1 = torch.zeros(layer_sizes[1]).to(device).requires_grad_()
+        torch.manual_seed(diff_seed)    # Ensures only higher layers differ between nets
+        self.w2 = torch.nn.Parameter(torch.ones(layer_sizes[1], layer_sizes[2]).normal_(0, hp.init_std))
+        # self.b2 = torch.nn.Parameter(torch.zeros(layer_sizes[2]))
+        self.b2 = torch.tensor(torch.zeros(layer_sizes[2])).to(device).requires_grad_()
+        # self.w3 = torch.nn.Parameter(torch.zeros(layer_sizes[2], layer_sizes[3]).normal_(0, hp.init_std))
+        # # self.b3 = torch.nn.Parameter(torch.zeros(layer_sizes[3]))True
+        # self.b3 = torch.tensor(torch.zeros(layer_sizes[3])).to(device).requires_grad_()
+        # self.w4 = torch.nn.Parameter(torch.zeros(layer_sizes[3], layer_sizes[4]).normal_(0, hp.init_std))
+        # # self.b4 = torch.nn.Parameter(torch.zeros(layer_sizes[4]))
+        # self.b4 = torch.tensor(torch.zeros(layer_sizes[4])).to(device).requires_grad_()
+        # self.trainable_params = [self.w2, self.b2, self.w3, self.b3, self.w4, self.b4]
+        # self.mask_w1 = torch.FloatTensor(10, 10).uniform_() > 0.8     # bit mask
+        self.optimizer = hp.optim_algo(self.parameters(), lr=hp.lr_out)
+
+    def forward(self, net2):
+        out = torch.empty(0,requires_grad=True).to(device)
+        # Concatenate parameters of layer [1:]
+        for param2 in list(net2.parameters()):
+            param2 = param2.view(-1)
+            out = torch.cat((out, param2), dim=0)
+        out = out.view(1, -1)
+        out = F.leaky_relu(out.mm(self.w1) + self.b1, negative_slope=1/5.5)
+        out = out.mm(self.w2) + self.b2
+        # out = F.leaky_relu(out.mm(self.w3) + self.b3, negative_slope=1/5.5)
+        # out =              out.mm(self.w4) + self.b4
+        return out.view(-1)
+
+
+
 
 
 
@@ -299,14 +299,14 @@ def grad_norm(grad):
     return torch.norm(flat_grad)
 
 
-def eval_and_print(hp, scores, update, agent1, agent2):
+def eval_and_print(game, scores, update, agent1, agent2):
     # evaluate:
-    score = (-hp.game.true_objective(agent1, agent2), -hp.game.true_objective(agent2, agent1))
+    score = (-game.true_objective(agent1, agent2), -game.true_objective(agent2, agent1))
     scores.append(score)
 
     # print
     if update % 10 == 0:
-        [grad1, grad2] = [torch.autograd.grad(hp.game.true_objective(agent1, agent2), agent1.parameters())
+        [grad1, grad2] = [torch.autograd.grad(game.true_objective(agent1, agent2), agent1.parameters())
                           for agent1, agent2 in [[agent1, agent2], [agent2, agent1]]]
         p1 = [np.round(p.item(), 3) for p in torch.sigmoid(agent1.forward(agent2))]
         p2 = [np.round(p.item(), 3) for p in torch.sigmoid(agent2.forward(agent1))]
@@ -364,6 +364,63 @@ def str_to_var(name):
     return name_dict[name]
 
 
+def save_plot(ax, hp):
+    filename = 'exp-group-name=' + str(hp.exp_group_name) + ',' \
+               + 'diff-through-inner-opt=' + str(hp.dont_diff_through_inner_opt) + ',' \
+               + 'lr-out=' + str(hp.lr_out).replace('.',',') + ',' \
+               + 'lr-in=' + str(hp.lr_in).replace('.',',') + ',' \
+               + 'joint-optim=' + str(int(hp.joint_optim)) + ',' \
+               + 'n-inner-opt-range=' + str(hp.n_inner_opt_range) + ',' \
+               + 'game=' + str(hp.game.__class__.__name__) + ',' \
+               + 'net-type=' + str(hp.net_type) + ',' \
+               + 'DD-val=' + str(hp.DD_val).replace('.', ',') + ',' \
+               + 'CC-val=' + str(hp.CC_val).replace('.', ',') + ',' \
+               + 'layer-sizes=' + str(hp.layer_sizes) + ',' \
+               + 'seed=' + str(hp.seed) + ',' \
+               + 'biases=' + str(hp.biases) + ','
+    foldername = hp.start_time + ': ' + hp.exp_group_name
+    pathname = '../data/graphs/' + foldername + '/'
+    if not os.path.exists(pathname):
+        os.mkdir(pathname)
+    plt.savefig(pathname + filename)
+
+
+def init_biases(ordered_biases_list, hp):
+    """Biases must be ordered by layer. Initializes bias tensors as given by hyperparams. Layer number starts at 1."""
+    for layer_num, bias in enumerate(ordered_biases_list):
+        if hp.biases_init == 'normal':
+            bias.normal_(0, hp.init_std)
+        else:
+            bias.fill_(float(hp.biases_init))
+        if (not hp.biases) or layer_num + 1 in hp.layers_wo_bias:    # Layer num starts at 1
+            bias.fill_(0)
+
+def init_bias_subspaces(ordered_bias_subspaces_list, hp, exp_row_norm):
+    """Bias subspaces must be ordered by layer.
+    Sets bias subspace tensor to zero if the corresponding bias is specified to be disabled in hyperparams.
+    Layer number starts at 1."""
+    for layer_num, bias_subspace in enumerate(ordered_bias_subspaces_list):
+        if hp.biases and layer_num + 1 not in hp.layers_wo_bias:
+            bias_subspace.normal_(0, 1 / exp_row_norm)
+        else:
+            bias_subspace.fill_(0)    # Prevents changing the bias
+
+
+def get_game(hp):
+    # Create game env
+    if hp.game == 'PD':
+        game = PD(payout_mat=hp.payout_mat, device=device)
+    elif hp.game == 'OSPD':
+        game = OSPD(payout_mat=hp.payout_mat, device=device)
+    elif hp.game == 'IPD':
+        game = IPD(hp.gamma, device=device)
+    elif hp.game == 'OSIPD':
+        game = OSIPD(hp.gamma, device=device)
+    else:
+        raise ValueError('Unknown game')
+    return game
+
+
 def main(hp=None):
     """Run script.
 
@@ -377,16 +434,19 @@ def main(hp=None):
     print("Hyperparams: \n", exp_name)
 
     colors = ['b','c','m','r','y','g']
+    fig, ax = plt.subplots(1,1)
 
     for i in range(*hp.n_inner_opt_range):
         torch.manual_seed(hp.seed)
         scores = np.array(play_LOLA(i, hp))
-        plt.plot(scores, colors[i], label=str(i)+" lookaheads")
+        ax.plot(scores, colors[i], label=str(i)+" lookaheads")
 
     plt.legend()
     plt.xlabel('grad steps')
     plt.ylabel('joint score')
-    plt.show(block=True)
+    # plt.show(block=True)
+    save_plot(ax, hp)
+
 
 
 # plot results:
