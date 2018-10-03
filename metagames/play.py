@@ -1,6 +1,6 @@
 #!/usr/bin/env pythonr
-"""Runs agents playing and optimization in a variety of prisoner's dilemma
-type games."""
+"""Script that runs agents and their optimization in a variety of prisoner's dilemma
+type games. In some of these games, agents take each other's parameters as input."""
 from copy import deepcopy
 import datetime
 import os
@@ -17,7 +17,6 @@ device = "cpu"
 if device == "cpu":
       from torch import FloatTensor
 else: from torch.cuda import FloatTensor
-# tensor = torch.tensor if device == "cpu" else torch.cuda.FloatTensor
 
 
 def parse_args(args=None):
@@ -38,11 +37,11 @@ def parse_args(args=None):
                      metavar='BOOL, 0<=FLOAT,=1',
                      help='1st arg: bool to give 0 < weight < 1 to gradient through self and 1-weight \ '
                           'through opponent. 2nd arg: the weight.')
-    par.add_argument('--lr-out', type=float, default=0.1, help='Learning rate for regular optimization (outer loop)')
-    par.add_argument('--lr-in', type=float, default=0.01, help='Learning rate for LOLA optimization (inner loop)')
+    par.add_argument('--lr-out', type=float, default=0.01, help='Learning rate for regular optimization (outer loop)')
+    par.add_argument('--lr-in', type=float, default=0.1, help='Learning rate for LOLA optimization (inner loop)')
     par.add_argument('--optim-algo', default='SGD', metavar='SGD or Adam')
     par.add_argument('--joint-optim', action='store_true', default=False, help='Joint descent of all agents')
-    par.add_argument('--n-outer-opt', type=int, default=10000, help='N training steps')
+    par.add_argument('--n-outer-opt', type=int, default=20000, help='N training steps')
     par.add_argument('--n-inner-opt-range', nargs=2, type=int, metavar=('LOW', 'HIGH'), default=(0, 2),
                      help='(Non-inclusive) range of LOLA inner opt steps. Each one will be plotted.')
 
@@ -60,7 +59,7 @@ def parse_args(args=None):
     par.add_argument('--biases', type=int, default=1, choices=[0, 1], help='Makes net without biases')
     par.add_argument('--biases-init', choices=['-1', '0', '1', 'normal'], default='normal', help='initialize biases to...')
     # TODO(sorenmind): remove
-    par.add_argument('--layers-wo-bias', nargs='+', type=int, help='List of layer numbers without biases. Starts at 1!')
+    par.add_argument('--layers-wo-bias', nargs='+', type=int, default=[], help='List of layer numbers without biases. Starts at 1!')
 
     # Other
     par.add_argument('--exp-group-name', default='no_name')
@@ -78,7 +77,7 @@ def parse_args(args=None):
     args.optim_algo = str_to_var(args.optim_algo)
     args.num_states = str_to_var((args.game, 'num_states'))
     args.layer_sizes = list(args.layer_sizes) + [args.num_states]
-    args.start_time = str(datetime.datetime.now())[:-10]
+    args.start_time = str(datetime.datetime.now())[:-7]
 
     return args
 
@@ -429,7 +428,6 @@ def main(hp=None):
     """
 
     hp = parse_args(hp)
-    # hp = HyParams()
     exp_name = [(key, hp.__dict__[key]) for key in sorted(hp.__dict__)]
     print("Hyperparams: \n", exp_name)
 
@@ -487,36 +485,6 @@ if __name__== "__main__":
     #     return out
 
 
-
-# class HyParams():
-#     def __init__(self):
-#         # Optimization
-#         self.diff_through_inner_opt = True
-#         self.weight_grad_paths = False
-#         self.grad_weight_self = 0.
-#         self.lr_out = 0.1 * (1. + self.weight_grad_paths)
-#         self.lr_in = 0.01 * (1. + self.weight_grad_paths)
-#         # self.optim_algo = torch.optim.Adam
-#         self.optim_algo = torch.optim.SGD
-#         self.joint_optim = False    # joint or alternating GD
-#         self.n_outer_opt = 8000
-#         self.n_inner_opt_range = (0, 1 + 1)
-#
-#         # Game
-#         # Games: PD (1 state), IPD (5 states), OSPD (1 state), OSIPD (5 states)
-#         self.game, self.num_states, self.net_type = 'OSPD', 1, 'OppAwareNetSubspace'    # 'OppAwareNetSubspace', 'NoInputFcNet'
-#         self.payout_mat = [[-2.9,0],[-3,-0.1]]
-#         # self.payout_mat = [[-2,0],[-3,-1]]  # Not implemented for IPD
-#         # self.gamma = 0.96
-#
-#         # Neural nets
-#         self.layer_sizes = [10, 10, self.num_states]
-#         # self.biases = True
-#         self.init_std = 0.1
-#         self.seed = 2
-#
-#         self.plot_progress = False
-#         self.plot_every_n = self.n_outer_opt // 5.
 
 
 # Grad update for NN with only modules
