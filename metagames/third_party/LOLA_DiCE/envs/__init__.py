@@ -5,7 +5,6 @@ from .open_source_prisoners_dilemma import OpenSourcePrisonersDilemma
 from .open_source_iterated_prisoners_dilemma import OpenSourceIteratedPrisonersDilemma
 
 
-
 # Aliases
 CG = CoinGameVec
 IPD = IteratedPrisonersDilemma

@@ -1,3 +1,4 @@
+"""Script that plays an open source prisoner's dilemma using the autograd package instead of Pytorch."""
 from __future__ import absolute_import, division
 from __future__ import print_function
 import autograd.numpy as np
