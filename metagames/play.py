@@ -66,6 +66,8 @@ def parse_args(args=None):
     par.add_argument('--exp-group-name', default='no_name')
     par.add_argument('--plot-progress', action='store_true', help='Plot scores during training AND after')
     par.add_argument('--plot-every-n', type=int, help='If plotting progress, plot every N steps')
+    par.add_argument('--data-directory', help='Save results in this directory.',
+                     default=os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data')))
 
     args = par.parse_args(args)
 
@@ -367,8 +369,8 @@ def str_to_var(name):
 def save_plot(ax, hp):
     filename = 'exp-group-name=' + str(hp.exp_group_name) + ',' \
                + 'diff-through-inner-opt=' + str(hp.dont_diff_through_inner_opt) + ',' \
-               + 'lr-out=' + str(hp.lr_out).replace('.',',') + ',' \
-               + 'lr-in=' + str(hp.lr_in).replace('.',',') + ',' \
+               + 'lr-out=' + str(hp.lr_out).replace('.', ',') + ',' \
+               + 'lr-in=' + str(hp.lr_in).replace('.', ',') + ',' \
                + 'joint-optim=' + str(int(hp.joint_optim)) + ',' \
                + 'n-inner-opt-range=' + str(hp.n_inner_opt_range) + ',' \
                + 'game=' + str(hp.game.__class__.__name__) + ',' \
@@ -379,10 +381,9 @@ def save_plot(ax, hp):
                + 'seed=' + str(hp.seed) + ',' \
                + 'biases=' + str(hp.biases) + ','
     foldername = hp.start_time + ': ' + hp.exp_group_name
-    pathname = '../data/graphs/' + foldername + '/'
-    if not os.path.exists(pathname):
-        os.mkdir(pathname)
-    plt.savefig(pathname + filename)
+    pathname = os.path.join(hp.data_directory, 'graphs', foldername)
+    os.makedirs(pathname, exist_ok=True)
+    plt.savefig(os.path.join(pathname, filename))
 
 
 def init_biases(ordered_biases_list, hp):
