@@ -1,4 +1,4 @@
-#!/usr/bin/env pythonr
+#!/usr/bin/env python
 """Script that runs agents and their optimization in a variety of prisoner's dilemma
 type games. In some of these games, agents take each other's parameters as input."""
 from copy import deepcopy
@@ -15,8 +15,9 @@ from metagames.third_party.LOLA_DiCE.envs import IPD, PD, OSPD, OSIPD
 # device = "cuda:0" if torch.cuda.is_available() else "cpu"
 device = "cpu"
 if device == "cpu":
-      from torch import FloatTensor
-else: from torch.cuda import FloatTensor
+    from torch import FloatTensor
+else:
+    from torch.cuda import FloatTensor
 
 
 def parse_args(args=None):
