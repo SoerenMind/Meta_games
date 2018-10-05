@@ -1,4 +1,4 @@
-#!/usr/bin/env pythonr
+#!/usr/bin/env python
 """Script that runs agents and their optimization in a variety of prisoner's dilemma
 type games. In some of these games, agents take each other's parameters as input."""
 from copy import deepcopy
@@ -15,8 +15,9 @@ from metagames.third_party.LOLA_DiCE.envs import IPD, PD, OSPD, OSIPD
 # device = "cuda:0" if torch.cuda.is_available() else "cpu"
 device = "cpu"
 if device == "cpu":
-      from torch import FloatTensor
-else: from torch.cuda import FloatTensor
+    from torch import FloatTensor
+else:
+    from torch.cuda import FloatTensor
 
 
 def parse_args(args=None):
@@ -67,6 +68,8 @@ def parse_args(args=None):
     par.add_argument('--independent-vars', nargs='*', default=[], help='Names of independent hyperparams. Given in graph title.')
     par.add_argument('--plot-progress', action='store_true', help='Plot scores during training AND after')
     par.add_argument('--plot-every-n', type=int, help='If plotting progress, plot every N steps')
+    par.add_argument('--data-directory', help='Save results in this directory.',
+                     default=os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data')))
 
     args = par.parse_args(args)
 
@@ -398,12 +401,11 @@ def save_plot(hp, testing=False):
         foldername = hp.foldername
     else:
         foldername = hp.start_time + ': ' + hp.exp_group_name
-    pathname = '../data/graphs/' + foldername + '/'
-    if not os.path.exists(pathname):
-        os.mkdir(pathname)
-    plt.savefig(pathname + filename)
+    pathname = os.path.join(hp.data_directory, 'graphs', foldername)
+    os.makedirs(pathname, exist_ok=True)
+    plt.savefig(os.path.join(pathname, filename))
     if testing:
-        os.remove(pathname + filename + '.png')
+        os.remove(os.path.join(pathname, filename) + '.png')
 
 
 def make_plot_title(hp):
