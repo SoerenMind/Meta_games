@@ -1,25 +1,79 @@
 """Script that lets you run experiments with different sets of
 hyperparameters to record outcomes. Calls play.py with those hyperparams."""
-from subprocess import call
 import metagames.play as play
+import numpy as np
 
 
 def run_compare_biases_settings():
-    # for biases in ['0', '1']:
-    #     run(biases=biases)
-    # layer_sizes = ['10', '5']
-    # run(layer_sizes=layer_sizes)
-    # for game in ['OSPD', 'IPD']:
-    #     run(game=game)
-    # run(joint_optim='False')
-    run(False,
-        joint_optim=False,
-        game='OSPD',
-        layer_sizes=['10', '5'],
-        DD_val='-2.9')
+    independent_vars = ['seed', 'biases', 'biases_init', 'layers_wo_bias']
+
+    seed_opt = ['0', '1', '2']
+    # biases_opt = ['0', '1']
+    biases_init_opt = ['-1', '0', '1', 'normal']
+    layers_wo_bias_opt = [[], ['0'], ['0', '1'], ['1']]
+
+    exp_group_name = '2018-10-04 19h: Biases options'
+    foldername = exp_group_name
+    n_outer_opt = '15000'
+    lr_out = '0.05'
 
 
-def run(command_instead_of_main, **kwargs):
+    num_runs = np.product([len(opt) for opt in [seed_opt, biases_init_opt, layers_wo_bias_opt]])
+    run_counter = 0
+
+    for layers_wo_bias in layers_wo_bias_opt:
+        # for biases in biases_opt:
+        for biases_init in biases_init_opt:
+            for seed in seed_opt:
+                run_counter += 1
+                print('Run %i / %i' %(run_counter, num_runs))
+                run(independent_vars=independent_vars,
+                    seed=seed,
+                    layers_wo_bias=layers_wo_bias,
+                    # biases=biases,
+                    biases_init=biases_init,
+                    exp_group_name=exp_group_name,
+                    n_outer_opt=n_outer_opt,
+                    lr_out=lr_out,
+                    foldername=foldername)
+
+
+def run_compare_learning_rates_and_payoffs():
+    # TODO(sorenmind): log time in filenames and log and errors somewhere.
+    independent_vars = ['lr_out', 'lr_in', 'CC_val', 'DD_val', 'seed']
+
+    seed_opt = ['0', '1', '2']
+    lr_out_opt = ['1', '0.1', '0.01']
+    lr_in_opt = ['0.1', '1', '10', '100']
+    CCDD_val_opt = [('-0.1', '-2.9'), ('-0.2', '-2.8'), ('-0.3', '-2.7'), ('-0.7', '-2.3')]
+
+    exp_group_name = '2018-10-04 19h: lr_in_out, CC, DD'
+    foldername = exp_group_name
+    n_outer_opt = '15000'
+    n_inner_opt_range = (0, 2)
+
+    num_runs = np.product([len(opt) for opt in [seed_opt, lr_out_opt, lr_in_opt, CCDD_val_opt]])
+    run_counter = 0
+
+    for CC_val, DD_val in CCDD_val_opt:
+        for lr_out in lr_out_opt:
+            for lr_in in lr_in_opt:
+                for seed in seed_opt:
+                    run_counter += 1
+                    print('Run %i / %i' %(run_counter, num_runs))
+                    run(independent_vars=independent_vars,
+                        seed=seed,
+                        lr_out=lr_out,
+                        lr_in=lr_in,
+                        CC_val=CC_val,
+                        DD_val=DD_val,
+                        exp_group_name=exp_group_name,
+                        n_outer_opt=n_outer_opt,
+                        foldername=foldername,
+                        n_inner_opt_range=n_inner_opt_range)
+
+
+def run(**kwargs):
     """Runs play.py with hyperparams given by kwargs.
     command_instead_of_main sets whether the play.main() function is called or play is run by
     a new python instance (so if one run crashes the present script continues with the other runs).
@@ -42,91 +96,13 @@ def run(command_instead_of_main, **kwargs):
             arglist.append('{value}'.format(value=str(value)))
 
     argstring = ' '.join(arglist)
-    if command_instead_of_main:
-        command = ['python3', 'play.py'] + arglist
-        print('Running command', command)
-        call(command)
-    else:
+    try:
         print('Running play.main with args:', argstring)
         play.main(arglist)
+    except:
+        print('Experiment failed')
 
-
-
-
-    # def run(# Set all hyperparams to default vals
-    #
-    #                 # Optimization
-    #                 dont_diff_through_inner_opt = default_args.dont_diff_through_inner_opt,
-    #                 weight_grad_paths = default_args.weight_grad_paths,
-    #                 lr_out = default_args.lr_out,
-    #                 lr_in = default_args.lr_in,
-    #                 optim_algo = default_args.optim_algo,
-    #                 joint_optim=default_args.joint_optim,
-    #                 n_outer_opt = default_args.n_outer_opt,
-    #                 n_inner_opt_range = default_args.n_inner_opt_range,
-    #
-    #                 # Game env
-    #                 game = default_args.game,
-    #                 net_type = default_args.net_type,
-    #                 DD_val = default_args.DD_val,
-    #                 CC_val = default_args.CC_val,
-    #                 gamma = default_args.gamma,
-    #
-    #                 # Neural nets
-    #                 layer_sizes = default_args.layer_sizes,
-    #                 init_std = default_args.init_std,
-    #                 seed = default_args.seed,
-    #                 biases = default_args.biases,
-    #                 biases_init = default_args.biases_init,
-    #                 layers_wo_bias = default_args.layers_wo_bias,
-    #
-    #                 # Other
-    #                 exp_group_name = default_args.exp_group_name,
-    #                 plot_progres = default_args.plot_progress,
-    #                 plot_every_n = default_args.plot_every_n
-    #         ):
-    #
-    #     command = ['python', 'play.py',
-    #
-    #                # Optimization
-    #                '--dont-diff-through-inner-opt', dont_diff_through_inner_opt,
-    #                '--weight-grad-paths', weight_grad_paths,
-    #                '--lr_out', lr_out,
-    #                '--lr_in', lr_in,
-    #                '--optim-algo', optim_algo,
-    #                '--joint-optim', joint_optim,
-    #                '--n-outer-opt', n_outer_opt,
-    #                '--n-inner-opt-range', n_inner_opt_range,
-    #
-    #                # Game env
-    #                '--game', game,
-    #                '--net-type', net_type,
-    #                '--DD-val', DD_val,
-    #                '--CC-val', CC_val,
-    #                '--gamma', gamma,
-    #
-    #                # Neural nets
-    #                '--layer-sizes', layer_sizes,
-    #                '--init-std', init_std,
-    #                '--seed', seed,
-    #                '--biases', biases,
-    #                '--biases-init', biases_init,
-    #                '--layers-wo-bias', layers_wo_bias,
-    #
-    #                # Other
-    #                '--exp-group-name', exp_group_name,
-    #                '--plot-progress', plot_progres,
-    #                '--plot-every-n', plot_every_n
-    #                ]
-    #     print('Running command', ' '.join([str(c) for c in command]))
-    #     call(command)
-    #
-    # return run
-
-def run_example(run):
-    run()
 
 if __name__=="__main__":
-    # default_args = play.parse_args()
-
-    run_compare_biases_settings()
+    # run_compare_biases_settings()
+    run_compare_learning_rates_and_payoffs()

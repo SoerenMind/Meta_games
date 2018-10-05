@@ -56,13 +56,15 @@ def parse_args(args=None):
     par.add_argument('--layer-sizes', nargs='+', type=int, default=(10, 10), help='input and hidden layers')
     par.add_argument('--init-std', type=float, default=0.1, help='Initialization std for net weights')
     par.add_argument('--seed', type=int, default=0)
-    par.add_argument('--biases', type=int, default=1, choices=[0, 1], help='Makes net without biases')
+    par.add_argument('--biases', type=int, default=1, choices=[0, 1], help='Makes net with biases')
     par.add_argument('--biases-init', choices=['-1', '0', '1', 'normal'], default='normal', help='initialize biases to...')
     # TODO(sorenmind): remove
-    par.add_argument('--layers-wo-bias', nargs='+', type=int, default=[], help='List of layer numbers without biases. Starts at 1!')
+    par.add_argument('--layers-wo-bias', nargs='*', type=int, default=[], help='List of layer numbers without biases. Starts at 1!')
 
     # Other
     par.add_argument('--exp-group-name', default='no_name')
+    par.add_argument('--foldername', default='None', help='If None, different time-based folder for each run')
+    par.add_argument('--independent-vars', nargs='*', default=[], help='Names of independent hyperparams. Given in graph title.')
     par.add_argument('--plot-progress', action='store_true', help='Plot scores during training AND after')
     par.add_argument('--plot-every-n', type=int, help='If plotting progress, plot every N steps')
 
@@ -298,20 +300,25 @@ def grad_norm(grad):
     return torch.norm(flat_grad)
 
 
+def concat_params(net):
+    return torch.cat([param.view(-1) for param in list(net.parameters())])
+
+
 def eval_and_print(game, scores, update, agent1, agent2):
     # evaluate:
     score = (-game.true_objective(agent1, agent2), -game.true_objective(agent2, agent1))
     scores.append(score)
 
     # print
-    if update % 10 == 0:
+    if update % 25 == 0:
         [grad1, grad2] = [torch.autograd.grad(game.true_objective(agent1, agent2), agent1.parameters())
                           for agent1, agent2 in [[agent1, agent2], [agent2, agent1]]]
         p1 = [np.round(p.item(), 3) for p in torch.sigmoid(agent1.forward(agent2))]
         p2 = [np.round(p.item(), 3) for p in torch.sigmoid(agent2.forward(agent1))]
         print('update', update, 'score (%.5f,%.5f)' % (score[0], score[1]), 'policy 1:', p1, 'policy 2:', p2,
               # 'param 1: %.5f' % np.array(list(agent1.parameters()))[-1][0][:3].item(),
-              'gradnorms x1000: %.4f, %.4f' %(1000 * grad_norm(grad1), 1000 * grad_norm(grad2))
+              'gradnorms x1000: %.4f, %.4f' %(1000 * grad_norm(grad1), 1000 * grad_norm(grad2)),
+              'Max param 1, 2: %.2f, %.2f:' % (concat_params(agent1).abs().max(), concat_params(agent2).abs().max())
               )
     return scores
 
@@ -363,25 +370,52 @@ def str_to_var(name):
     return name_dict[name]
 
 
-def save_plot(ax, hp):
-    filename = 'exp-group-name=' + str(hp.exp_group_name) + ',' \
-               + 'diff-through-inner-opt=' + str(hp.dont_diff_through_inner_opt) + ',' \
-               + 'lr-out=' + str(hp.lr_out).replace('.',',') + ',' \
-               + 'lr-in=' + str(hp.lr_in).replace('.',',') + ',' \
-               + 'joint-optim=' + str(int(hp.joint_optim)) + ',' \
-               + 'n-inner-opt-range=' + str(hp.n_inner_opt_range) + ',' \
-               + 'game=' + str(hp.game.__class__.__name__) + ',' \
-               + 'net-type=' + str(hp.net_type) + ',' \
-               + 'DD-val=' + str(hp.DD_val).replace('.', ',') + ',' \
-               + 'CC-val=' + str(hp.CC_val).replace('.', ',') + ',' \
-               + 'layer-sizes=' + str(hp.layer_sizes) + ',' \
-               + 'seed=' + str(hp.seed) + ',' \
-               + 'biases=' + str(hp.biases) + ','
-    foldername = hp.start_time + ': ' + hp.exp_group_name
+def save_plot(hp, testing=False):
+    """Warning: If there is an independent variable that isn't in the dict below, it's graph file
+    will be overwritten and only one setting is saved.
+
+    -testing: Saves empty plot and deletes it to see if it crashes."""
+    hyperparams_in_filename = {'exp-group-name=': str(hp.exp_group_name),
+               # 'diff-through-inner-opt=': str(hp.dont_diff_through_inner_opt),
+               'lr-out=': str(hp.lr_out).replace('.',','),
+               'lr-in=': str(hp.lr_in).replace('.',','),
+               'joint-optim=': str(int(hp.joint_optim)),
+               # 'n-inner-opt-range=': str(hp.n_inner_opt_range),
+               'game=': str(hp.game),
+               # 'net-type=': str(hp.net_type),
+               'DD-val=': str(hp.DD_val).replace('.', ','),
+               'CC-val=': str(hp.CC_val).replace('.', ','),
+               'layer-sizes=': str(hp.layer_sizes),
+               'seed=': str(hp.seed),
+               'biases=': str(hp.biases),
+               'biases_init=': str(hp.biases_init),
+               'layers_wo_biases=': str(hp.layers_wo_bias)
+               }
+    filename = ','.join([key + str(val) for key, val in hyperparams_in_filename.items()])
+    plt.title(make_plot_title(hp))
+
+    if hp.foldername != 'None':
+        foldername = hp.foldername
+    else:
+        foldername = hp.start_time + ': ' + hp.exp_group_name
     pathname = '../data/graphs/' + foldername + '/'
     if not os.path.exists(pathname):
         os.mkdir(pathname)
     plt.savefig(pathname + filename)
+    if testing:
+        os.remove(pathname + filename + '.png')
+
+
+def make_plot_title(hp):
+    """Puts independent vars into title"""
+    title = ''
+    for var in hp.independent_vars:
+        try:
+            val = hp.__dict__[var]
+            title += var + '=' + str(val) + ','
+        except KeyError:
+            raise KeyError('unknown independent variable')
+    return title
 
 
 def init_biases(ordered_biases_list, hp):
@@ -393,6 +427,7 @@ def init_biases(ordered_biases_list, hp):
             bias.fill_(float(hp.biases_init))
         if (not hp.biases) or layer_num + 1 in hp.layers_wo_bias:    # Layer num starts at 1
             bias.fill_(0)
+
 
 def init_bias_subspaces(ordered_bias_subspaces_list, hp, exp_row_norm):
     """Bias subspaces must be ordered by layer.
@@ -433,6 +468,7 @@ def main(hp=None):
 
     colors = ['b','c','m','r','y','g']
     fig, ax = plt.subplots(1,1)
+    save_plot(hp, testing=True)
 
     for i in range(*hp.n_inner_opt_range):
         torch.manual_seed(hp.seed)
@@ -441,9 +477,10 @@ def main(hp=None):
 
     plt.legend()
     plt.xlabel('grad steps')
-    plt.ylabel('joint score')
+    plt.ylabel('score for each agent')
     # plt.show(block=True)
-    save_plot(ax, hp)
+    save_plot(hp)
+    plt.close()
 
 
 
