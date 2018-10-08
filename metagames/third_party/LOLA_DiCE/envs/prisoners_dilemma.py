@@ -75,7 +75,8 @@ class PrisonersDilemma(gym.Env):
         p1 = torch.sigmoid(theta1.forward())
         p2 = torch.sigmoid(theta2.forward())
         # create initial laws, transition matrix and rewards:
-        outcome_probs = torch.ger(torch.stack([p1, 1 - p1], dim=1).view(-1), torch.stack([p2, 1 - p2], dim=1).view(-1))
+        # outcome_probs = torch.ger(torch.stack([p1, 1 - p1], dim=1).view(-1), torch.stack([p2, 1 - p2], dim=1).view(-1))
+        outcome_probs = torch.ger(torch.stack([1 - p1, p1], dim=1).view(-1), torch.stack([1 -p2, p2], dim=1).view(-1))
         payout_mat = torch.from_numpy(self.payout_mat).float()
         objective = (payout_mat * outcome_probs).sum()
         return -objective

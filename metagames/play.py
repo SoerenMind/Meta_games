@@ -42,7 +42,7 @@ def parse_args(args=None):
     par.add_argument('--lr-in', type=float, default=0.1, help='Learning rate for LOLA optimization (inner loop)')
     par.add_argument('--optim-algo', default='SGD', metavar='SGD or Adam')
     par.add_argument('--joint-optim', action='store_true', default=False, help='Joint descent of all agents')
-    par.add_argument('--n-outer-opt', type=int, default=20000, help='N training steps')
+    par.add_argument('--n-outer-opt', type=int, default=40000, help='N training steps')
     par.add_argument('--n-inner-opt-range', nargs=2, type=int, metavar=('LOW', 'HIGH'), default=(0, 2),
                      help='(Non-inclusive) range of LOLA inner opt steps. Each one will be plotted.')
 
@@ -94,7 +94,7 @@ def play_LOLA(n_inner_opt, hp):
     :param n_inner_opt: number of steps opponent takes in inner loop for LOLA.
     """
     print("start iterations with", n_inner_opt, "lookaheads:")
-    scores = []
+    scores, policies = [], []
 
     game = get_game(hp)
 
@@ -129,7 +129,7 @@ def play_LOLA(n_inner_opt, hp):
 
     # SGD loop
     for update in range(hp.n_outer_opt):
-        scores = eval_and_print(game, scores, update, net1, net2)
+        scores, policies = eval_and_print(game, scores, policies, update, net1, net2)
         if hp.plot_progress:
             plot_progress(scores, n_inner_opt, hp.n_outer_opt, hp.plot_every_n, update)
         net2_ = deepcopy(net2).to(device)
@@ -139,7 +139,7 @@ def play_LOLA(n_inner_opt, hp):
         if hp.joint_optim == False:
             net1_ = deepcopy(net1).to(device)
         LOLA_step(net2, net1_)
-    return scores
+    return scores, policies
 
 
 class OppAwareNetSubspace(torch.nn.Module):
@@ -307,23 +307,27 @@ def concat_params(net):
     return torch.cat([param.view(-1) for param in list(net.parameters())])
 
 
-def eval_and_print(game, scores, update, agent1, agent2):
+def eval_and_print(game, scores, policies, update, agent1, agent2):
     # evaluate:
-    score = (-game.true_objective(agent1, agent2), -game.true_objective(agent2, agent1))
-    scores.append(score)
+    eval_every = 5
+    if update % eval_every == 0:
+        score = [-game.true_objective(agent1, agent2), -game.true_objective(agent2, agent1)]
+        scores.append([score] * eval_every)
+        policy1 = [np.round(p.item(), 3) for p in torch.sigmoid(agent1.forward(agent2))][0]
+        policy2 = [np.round(p.item(), 3) for p in torch.sigmoid(agent2.forward(agent1))][0]
+        policies.append([[[policy1, policy2]] * eval_every])
 
     # print
     if update % 25 == 0:
         [grad1, grad2] = [torch.autograd.grad(game.true_objective(agent1, agent2), agent1.parameters())
                           for agent1, agent2 in [[agent1, agent2], [agent2, agent1]]]
-        p1 = [np.round(p.item(), 3) for p in torch.sigmoid(agent1.forward(agent2))]
-        p2 = [np.round(p.item(), 3) for p in torch.sigmoid(agent2.forward(agent1))]
-        print('update', update, 'score (%.5f,%.5f)' % (score[0], score[1]), 'policy 1:', p1, 'policy 2:', p2,
+        print('update', update, 'score (%.5f,%.5f)' % (score[0], score[1]),
+              'policy 1, policy2:', policy1, policy2,
               # 'param 1: %.5f' % np.array(list(agent1.parameters()))[-1][0][:3].item(),
-              'gradnorms x1000: %.4f, %.4f' %(1000 * grad_norm(grad1), 1000 * grad_norm(grad2)),
+              'gradnorms x1000: %.4f, %.3f' %(1000 * grad_norm(grad1), 1000 * grad_norm(grad2)),
               'Max param 1, 2: %.2f, %.2f:' % (concat_params(agent1).abs().max(), concat_params(agent2).abs().max())
               )
-    return scores
+    return scores, policies
 
 
 class SelfOutputNet(torch.nn.Module):
@@ -458,7 +462,7 @@ def get_game(hp):
 
 
 def main(hp=None):
-    """Run script.
+    """Runs script. Calls play_LOLA and plots results.
 
     Args:
         hp: A list of argument strings to use instead of sys.argv.
@@ -469,17 +473,20 @@ def main(hp=None):
     print("Hyperparams: \n", exp_name)
 
     colors = ['b','c','m','r','y','g']
-    fig, ax = plt.subplots(1,1)
+    fig, [ax1, ax2] = plt.subplots(1,2)
     save_plot(hp, testing=True)
 
     for i in range(*hp.n_inner_opt_range):
         torch.manual_seed(hp.seed)
-        scores = np.array(play_LOLA(i, hp))
-        ax.plot(scores, colors[i], label=str(i)+" lookaheads")
+        scores, policies = np.array(play_LOLA(i, hp))
+        ax1.plot(scores, colors[i])
+        ax2.plot(policies, colors[i], label=str(i)+" lookaheads")
 
     plt.legend()
-    plt.xlabel('grad steps')
-    plt.ylabel('score for each agent')
+    ax1.set_xlabel('grad steps')
+    ax2.set_xlabel('grad steps')
+    ax1.set_ylabel('score for each agent')
+    ax2.set_ylabel('cooperation probability for each agent')
     # plt.show(block=True)
     save_plot(hp)
     plt.close()

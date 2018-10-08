@@ -42,15 +42,15 @@ def run_compare_learning_rates_and_payoffs():
     # TODO(sorenmind): log time in filenames and log and errors somewhere.
     independent_vars = ['lr_out', 'lr_in', 'CC_val', 'DD_val', 'seed']
 
-    seed_opt = ['0', '1', '2']
-    lr_out_opt = ['1', '0.1', '0.01']
-    lr_in_opt = ['0.1', '1', '10', '100']
-    CCDD_val_opt = [('-0.1', '-2.9'), ('-0.2', '-2.8'), ('-0.3', '-2.7'), ('-0.7', '-2.3')]
+    seed_opt = ['2', '3', '4', '5']
+    lr_out_opt = ['0.1', '0.01']
+    lr_in_opt = ['1', '10']
+    CCDD_val_opt = [('-0.1', '-2.9'),  ('-0.7', '-2.3'), ('-1', '-2'), ('-0.8', '-2.2')]
 
-    exp_group_name = '2018-10-04 19h: lr_in_out, CC, DD'
+    exp_group_name = '2018-10-05 19h: 150k, lr_in, CC, DD'
     foldername = exp_group_name
-    n_outer_opt = '15000'
-    n_inner_opt_range = (0, 2)
+    n_outer_opt = '150000'
+    n_inner_opt_range = (0, 3)
 
     num_runs = np.product([len(opt) for opt in [seed_opt, lr_out_opt, lr_in_opt, CCDD_val_opt]])
     run_counter = 0

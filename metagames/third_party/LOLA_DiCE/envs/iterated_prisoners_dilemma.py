@@ -50,6 +50,9 @@ class IteratedPrisonersDilemma(gym.Env):
         info = [{'available_actions': aa} for aa in self.available_actions]
         return observation, info
 
+    def phi(self, x1, x2):
+        return [(1 - x1) * (1 - x2), (1 - x1) * x2, x1 * (1 - x2), x1 * x2]
+
     def true_objective(self, theta1, theta2):
         """Differentiable objective in torch"""
         p1 = torch.sigmoid(theta1.forward())
@@ -59,10 +62,9 @@ class IteratedPrisonersDilemma(gym.Env):
         p0 = (p1[0], p2[0])
         p = (p1[1:], p2[1:])
         # create initial laws, transition matrix and rewards:
-        def phi(x1, x2):
-            return [x1 * x2, x1 * (1 - x2), (1 - x1) * x2, (1 - x1) * (1 - x2)]
-        P0 = torch.stack(phi(*p0), dim=0).view(1,-1)
-        P = torch.stack(phi(*p), dim=1)
+
+        P0 = torch.stack(self.phi(*p0), dim=0).view(1,-1)
+        P = torch.stack(self.phi(*p), dim=1)
         R = torch.from_numpy(self.payout_mat).to(self.device).view(-1,1).float()
         # the true value to optimize:
         objective = (P0.mm(torch.inverse(torch.eye(4, device=self.device) - self.gamma*P))).mm(R)
