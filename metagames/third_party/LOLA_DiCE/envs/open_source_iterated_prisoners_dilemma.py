@@ -43,7 +43,7 @@ class OpenSourceIteratedPrisonersDilemma(gym.Env):
         # self.step_count = None
 
     def phi(self, x1, x2):
-        return [x1 * x2, x1 * (1 - x2), (1 - x1) * x2, (1 - x1) * (1 - x2)]
+        return [(1 - x1) * (1 - x2), (1 - x1) * x2, x1 * (1 - x2), x1 * x2]
 
     def true_objective(self, net1, net2):
         """Differentiable objective in torch"""

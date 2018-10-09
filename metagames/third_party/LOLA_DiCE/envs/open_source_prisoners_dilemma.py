@@ -49,7 +49,8 @@ class OpenSourcePrisonersDilemma(gym.Env):
         p1 = torch.sigmoid(net1.forward(net2))
         p2 = torch.sigmoid(net2.forward(net1))
         # create initial laws, transition matrix and rewards:
-        outcome_probs = torch.ger(torch.stack([p1, 1 - p1], dim=1).view(-1), torch.stack([p2, 1 - p2], dim=1).view(-1))
+        # Use p1/p2 as cooperation probabilities:
+        outcome_probs = torch.ger(torch.stack([1 - p1, p1], dim=1).view(-1), torch.stack([1 - p2, p2], dim=1).view(-1))
         objective = (self.payout_mat_tensor * outcome_probs).sum()
         return -objective
 
@@ -57,7 +58,7 @@ class OpenSourcePrisonersDilemma(gym.Env):
         p1 = torch.sigmoid(deepcopy(net1).forward(net2))
         p2 = torch.sigmoid(net2.forward(net1))
         # create initial laws, transition matrix and rewards:
-        outcome_probs = torch.ger(torch.stack([p1, 1 - p1], dim=1).view(-1), torch.stack([p2, 1 - p2], dim=1).view(-1))
+        outcome_probs = torch.ger(torch.stack([1 - p1, p1], dim=1).view(-1), torch.stack([1 - p2, p2], dim=1).view(-1))
         objective = (self.payout_mat_tensor * outcome_probs).sum()
         return -objective
 
@@ -65,7 +66,7 @@ class OpenSourcePrisonersDilemma(gym.Env):
         p1 = torch.sigmoid(net1.forward(net2))
         p2 = torch.sigmoid(net2.forward(deepcopy(net1)))
         # create initial laws, transition matrix and rewards:
-        outcome_probs = torch.ger(torch.stack([p1, 1 - p1], dim=1).view(-1), torch.stack([p2, 1 - p2], dim=1).view(-1))
+        outcome_probs = torch.ger(torch.stack([1 - p1, p1], dim=1).view(-1), torch.stack([1 - p2, p2], dim=1).view(-1))
         objective = (self.payout_mat_tensor * outcome_probs).sum()
         return -objective
 
