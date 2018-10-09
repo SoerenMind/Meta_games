@@ -1,6 +1,4 @@
 """Package setup script."""
-import sys
-
 import setuptools
 
 setuptools.setup(

@@ -70,6 +70,14 @@ def parse_args(args=None):
         "--optimizer", action=cli_utils.DictLookupAction, choices=OPTIMIZERS, default="grad", help="Optimizer."
     )
     parser.add_argument(
+        "--step-ratio",
+        default=(1, 1),
+        type=int,
+        nargs=2,
+        metavar=("AGENT", "OPPONENT"),
+        help="Ratio of gradient descent steps between agent and opponent.",
+    )
+    parser.add_argument(
         "--objective",
         action=cli_utils.DictLookupAction,
         choices=LOSSES,
@@ -81,11 +89,25 @@ def parse_args(args=None):
 
     parser.add_argument("--parameter-seed", type=int, default=1, help="Seed for parameter initialization.")
     parser.add_argument("--agent-seed", type=int, default=2, help="Seed for agent meta-parameter initialization.")
+
     return parser.parse_args(args)
 
 
 def make_parameters(rand, size):
     return torch.nn.Parameter(torch.from_numpy(rand.normal(size=size, scale=1 / np.sqrt(size))))
+
+
+def grad_step(agent, opponent, agent_parameters, opponent_parameters, loss_fn, optimizer):
+    agent_logit = agent(agent_parameters, opponent_parameters)
+    opponent_logit = opponent(opponent_parameters, agent_parameters)
+    agent_cooperate_prob = torch.sigmoid(agent_logit)
+    opponent_cooperate_prob = torch.sigmoid(opponent_logit)
+    agent_utility = game.prisoners_dilema(agent_cooperate_prob, opponent_cooperate_prob)
+    loss = loss_fn(agent_logit, opponent_logit, agent_utility)
+
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
 
 
 def main(args=None):
@@ -100,7 +122,7 @@ def main(args=None):
     rand = np.random.RandomState(args.parameter_seed)
     agent_rand = np.random.RandomState(args.agent_seed)
 
-    agent = args.agent(num_parameters, rand=agent_rand)
+    agent = args.agent(num_parameters=num_parameters, rand=agent_rand)
     agent_parameters = make_parameters(rand, num_parameters)
 
     optimizer_kwargs = {}
@@ -111,12 +133,19 @@ def main(args=None):
     loss_fn, = args.objective
 
     if args.opponent == "independent":
+        opponent = agent
         opponent_parameters = make_parameters(rand, num_parameters)
+        agent_steps, opponent_steps = args.step_ratio
+        opponent_optimizer = args.optimizer([opponent_parameters], **optimizer_kwargs)
     else:
+        opponent = agent
         opponent_parameters = {
             "self_aware": lambda: agent_parameters,
             "self_unaware": lambda: agent_parameters.detach(),
         }[args.opponent]()
+        agent_steps = 1
+        opponent_steps = 0
+        opponent_optimizer = None
 
     # for _ in tqdm.tqdm(range(args.num_steps)):
     for i in range(args.num_steps):
@@ -134,7 +163,6 @@ def main(args=None):
         print(f"oppnt logit: {opponent_logit.detach().numpy()}")
         print(f"agent cooperate prob: {agent_cooperate_prob.detach().numpy()}")
         print(f"oppnt cooperate prob: {opponent_cooperate_prob.detach().numpy()}")
-        # Self-cooperation probability - not necessary for gradient
         agent_parameters_nograd = agent_parameters.detach()
         agent_self_cooperate_prob = (
             torch.sigmoid(agent(agent_parameters_nograd, agent_parameters_nograd)).detach().numpy()
@@ -144,9 +172,11 @@ def main(args=None):
         print(f"loss: {loss.detach().numpy()}")
         print()
 
-        agent_optimizer.zero_grad()
-        loss.backward()
-        agent_optimizer.step()
+        for _ in range(agent_steps):
+            grad_step(agent, opponent, agent_parameters, opponent_parameters, loss_fn, agent_optimizer)
+
+        for _ in range(opponent_steps):
+            grad_step(opponent, agent, opponent_parameters, agent_parameters, loss_fn, opponent_optimizer)
 
 
 if __name__ == "__main__":
