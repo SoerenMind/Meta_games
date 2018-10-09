@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import torch
 
-from metagames import torchutils
+from metagames.utils import torch as torchutils
 
 
 class _Constant(torch.nn.Module):

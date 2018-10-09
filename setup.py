@@ -16,6 +16,7 @@ setuptools.setup(
         "numpy>=1.14.0",
         "torch>=0.4.0a0",
         "torchvision>=0.2",
+        "tqdm>=4.24.0",
     ],
     extras_require={},
 )
