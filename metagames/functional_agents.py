@@ -105,3 +105,9 @@ class CooperateAgent(_ConstantAgent):
 class DefectAgent(_ConstantAgent):
     def __init__(self, **kwargs):
         super().__init__(cooperate_logit=-100.0, **kwargs)
+
+
+class CliqueAgent(BasePrisonersDilemmaAgent):
+    """Cooperates with the other agent based on L2 similarity."""
+    def forward(self, my_params, other_params):
+        return - torch.log(5 * torch.norm(my_params - other_params))

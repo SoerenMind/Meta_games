@@ -20,6 +20,7 @@ AGENTS = {
     "defect": functional_agents.DefectAgent,
     "linear": functional_agents.LinearAgent,
     "simple-linear": functional_agents.SimpleLinearAgent,
+    "clique": functional_agents.CliqueAgent,
 }
 OPTIMIZERS = {"grad": torch.optim.SGD, "adam": torch.optim.Adam, "lbfgs": torch.optim.LBFGS}
 
