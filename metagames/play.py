@@ -58,7 +58,7 @@ def parse_args(args=None):
     par.add_argument('--init-std', type=float, default=0.1, help='Initialization std for net weights')
     par.add_argument('--seed', type=int, default=0)
     par.add_argument('--biases', type=int, default=1, choices=[0, 1], help='Makes net with biases')
-    par.add_argument('--biases-init', choices=['-1', '0', '1', 'normal'], default='normal', help='initialize biases to...')
+    par.add_argument('--biases-init', choices=['-1', '0', '1', 'normal'], default='0', help='initialize biases to... Deterministic means agent start w/ ~same P(C)')
     # TODO(sorenmind): remove
     par.add_argument('--layers-wo-bias', nargs='*', type=int, default=[], help='List of layer numbers without biases. Starts at 1!')
 
@@ -88,9 +88,7 @@ def parse_args(args=None):
 
 
 def play_LOLA(n_inner_opt, hp):
-    """Create two agents, play the game, return score        if update == 500:
-            x = 1
-            passs over time.
+    """Create two agents, play the game, return score- and policy log.
     :param n_inner_opt: number of steps opponent takes in inner loop for LOLA.
     """
     print("start iterations with", n_inner_opt, "lookaheads:")
@@ -308,20 +306,22 @@ def concat_params(net):
 
 
 def eval_and_print(game, scores, policies, update, agent1, agent2):
+    """Evaluates scores and policies, prints them along with others,
+    takes in list of all past scores/policies and outputs updated version."""
     # evaluate:
     eval_every = 5
     if update % eval_every == 0:
-        score = [-game.true_objective(agent1, agent2), -game.true_objective(agent2, agent1)]
-        scores.append([score] * eval_every)
+        score1, score2 = -game.true_objective(agent1, agent2).item(), -game.true_objective(agent2, agent1).item()
         policy1 = [np.round(p.item(), 3) for p in torch.sigmoid(agent1.forward(agent2))][0]
         policy2 = [np.round(p.item(), 3) for p in torch.sigmoid(agent2.forward(agent1))][0]
-        policies.append([[[policy1, policy2]] * eval_every])
+        scores = scores + [[score1, score2]] * eval_every
+        policies = policies + [[policy1, policy2]] * eval_every
 
     # print
-    if update % 25 == 0:
+    if update % 100 == 0:
         [grad1, grad2] = [torch.autograd.grad(game.true_objective(agent1, agent2), agent1.parameters())
                           for agent1, agent2 in [[agent1, agent2], [agent2, agent1]]]
-        print('update', update, 'score (%.5f,%.5f)' % (score[0], score[1]),
+        print('update', update, 'score (%.5f,%.5f)' % (score1, score2),
               'policy 1, policy2:', policy1, policy2,
               # 'param 1: %.5f' % np.array(list(agent1.parameters()))[-1][0][:3].item(),
               'gradnorms x1000: %.4f, %.3f' %(1000 * grad_norm(grad1), 1000 * grad_norm(grad2)),
@@ -377,7 +377,7 @@ def str_to_var(name):
     return name_dict[name]
 
 
-def save_plot(hp, testing=False):
+def save_plot(hp, fig, testing=False):
     """Warning: If there is an independent variable that isn't in the dict below, it's graph file
     will be overwritten and only one setting is saved.
 
@@ -400,6 +400,7 @@ def save_plot(hp, testing=False):
                }
     filename = ','.join([key + str(val) for key, val in hyperparams_in_filename.items()])
     plt.title(make_plot_title(hp))
+    fig.set_figwidth(10)
 
     if hp.foldername != 'None':
         foldername = hp.foldername
@@ -474,7 +475,7 @@ def main(hp=None):
 
     colors = ['b','c','m','r','y','g']
     fig, [ax1, ax2] = plt.subplots(1,2)
-    save_plot(hp, testing=True)
+    save_plot(hp, fig, testing=True)
 
     for i in range(*hp.n_inner_opt_range):
         torch.manual_seed(hp.seed)
@@ -488,9 +489,10 @@ def main(hp=None):
     ax1.set_ylabel('score for each agent')
     ax2.set_ylabel('cooperation probability for each agent')
     # plt.show(block=True)
-    save_plot(hp)
+    save_plot(hp, fig)
     plt.close()
 
+    return scores, policies
 
 
 # plot results:
