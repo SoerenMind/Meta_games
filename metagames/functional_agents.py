@@ -111,3 +111,42 @@ class CliqueAgent(BasePrisonersDilemmaAgent):
     """Cooperates with the other agent based on L2 similarity."""
     def forward(self, my_params, other_params):
         return - torch.log(5 * torch.norm(my_params - other_params))
+
+
+class SubspaceNeuralNetworkAgent(BasePrisonersDilemmaAgent):
+    """Cooperates with the other agent based on the output of a neural network.
+
+    Network parameters are affine transformations of the agent's own parameters.
+    """
+    def __init__(self, num_parameters, layer_rel_sizes=(5,), dtype=torch.double, **kwargs):
+        """Initialize a NeuralNetworkAgent.
+
+        Args:
+            num_parameters: Number of agent and opponent parameters.
+            layer_rel_sizes: Hidden layer sizes, as multiples of num_parameters.
+        """
+        super().__init__(**kwargs)
+        hyper_layers = []
+        self.layer_sizes = []
+
+        input_size = num_parameters
+        # None for the final cooperate logit with size 1
+        for rel_size in tuple(layer_rel_sizes) + (None,):
+            if rel_size is None:
+                output_size = 1
+            else:
+                output_size = num_parameters * rel_size
+            self.layer_sizes.append((input_size, output_size))
+            hyper_layers.append(torch.nn.ModuleDict({
+                'weight': torch.nn.Linear(num_parameters, input_size * output_size).to(dtype),
+                'bias': torch.nn.Linear(num_parameters, output_size).to(dtype)}))
+            input_size = output_size
+        self.hyper_layers = torch.nn.ModuleList(hyper_layers)
+
+    def forward(self, my_params, other_params):
+        h = other_params
+        for hyper_layer, (in_size, out_size) in zip(self.hyper_layers, self.layer_sizes):
+            weight = hyper_layer['weight'](my_params).reshape(out_size, in_size)
+            bias = hyper_layer['bias'](my_params)
+            h = torch.nn.functional.linear(h, weight=weight, bias=bias)
+        return torch.squeeze(h, dim=-1)

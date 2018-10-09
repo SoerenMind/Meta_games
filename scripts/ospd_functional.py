@@ -21,6 +21,7 @@ AGENTS = {
     "linear": functional_agents.LinearAgent,
     "simple-linear": functional_agents.SimpleLinearAgent,
     "clique": functional_agents.CliqueAgent,
+    'nn': functional_agents.SubspaceNeuralNetworkAgent,
 }
 OPTIMIZERS = {"grad": torch.optim.SGD, "adam": torch.optim.Adam, "lbfgs": torch.optim.LBFGS}
 
@@ -122,6 +123,7 @@ def main(args=None):
 
     rand = np.random.RandomState(args.parameter_seed)
     agent_rand = np.random.RandomState(args.agent_seed)
+    torch.manual_seed(args.agent_seed)
 
     agent = args.agent(num_parameters=num_parameters, rand=agent_rand)
     agent_parameters = make_parameters(rand, num_parameters)
