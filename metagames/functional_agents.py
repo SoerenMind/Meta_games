@@ -145,8 +145,10 @@ class SubspaceNeuralNetworkAgent(BasePrisonersDilemmaAgent):
 
     def forward(self, my_params, other_params):
         h = other_params
-        for hyper_layer, (in_size, out_size) in zip(self.hyper_layers, self.layer_sizes):
+        for i, (hyper_layer, (in_size, out_size)) in enumerate(zip(self.hyper_layers, self.layer_sizes)):
             weight = hyper_layer['weight'](my_params).reshape(out_size, in_size)
             bias = hyper_layer['bias'](my_params)
             h = torch.nn.functional.linear(h, weight=weight, bias=bias)
+            if i != len(self.layer_sizes) - 1:
+                h = torch.nn.functional.relu(h)
         return torch.squeeze(h, dim=-1)
