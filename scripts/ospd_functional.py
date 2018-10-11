@@ -6,21 +6,20 @@ import sys
 
 import numpy as np
 import torch
-import tqdm
 
-from metagames import functional_agents
 from metagames import game
+import metagames.functional.agents as functional_agents
 import metagames.utils.cli as cli_utils
 
 AGENTS = {
     "dot": functional_agents.DotProductAgent,
     "sum": functional_agents.SumAgent,
     "selfish": functional_agents.SelfishAgent,
-    "cooperate": functional_agents.CooperateAgent,
-    "defect": functional_agents.DefectAgent,
+    "cooperate": functional_agents.Play1Agent,
+    "defect": functional_agents.Play0Agent,
     "linear": functional_agents.LinearAgent,
     "simple-linear": functional_agents.SimpleLinearAgent,
-    "clique": functional_agents.CliqueAgent,
+    "clique": functional_agents.SimilarityAgent,
     'nn': functional_agents.SubspaceNeuralNetworkAgent,
 }
 OPTIMIZERS = {"grad": torch.optim.SGD, "adam": torch.optim.Adam, "lbfgs": torch.optim.LBFGS}
@@ -150,7 +149,6 @@ def main(args=None):
         opponent_steps = 0
         opponent_optimizer = None
 
-    # for _ in tqdm.tqdm(range(args.num_steps)):
     for i in range(args.num_steps):
         agent_logit = agent(agent_parameters, opponent_parameters)
         opponent_logit = agent(opponent_parameters, agent_parameters)
