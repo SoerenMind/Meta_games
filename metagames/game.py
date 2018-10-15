@@ -18,7 +18,7 @@ def binary_game(player1_payoff_matrix, player1_action, player2_action):
     """
     player1_distribution = torch.stack([player1_action, 1 - player1_action], -1)
     player2_distribution = torch.stack([player2_action, 1 - player2_action], -1)
-    return F.bilinear(player1_distribution, player2_distribution, player1_payoff_matrix[None, :, :])
+    return torch.sum(torch.matmul(player1_distribution, player1_payoff_matrix) * player2_distribution, dim=-1)
 
 
 def prisoners_dilema(player1_action, player2_action):
