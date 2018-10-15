@@ -52,7 +52,7 @@ class DotProductAgent(OpenSourceBinaryGameAgent):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.num_parameters != self.num_opponent_parameters:
-            raise ValueError(f"{self.__class__.__name__} requires num_opponent_parameters == num_parameters.")
+            raise ValueError("{:s} requires num_opponent_parameters == num_parameters.".format(self.__class__.__name__))
 
     def forward(self, my_params, other_params):
         return torch.sum(my_params * other_params, -1)
@@ -145,7 +145,7 @@ class SimilarityAgent(OpenSourceBinaryGameAgent):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.num_parameters != self.num_opponent_parameters:
-            raise ValueError(f"{self.__class__.__name__} requires num_opponent_parameters == num_parameters.")
+            raise ValueError("{:s} requires num_opponent_parameters == num_parameters.".format(self.__class__.__name__))
 
     def forward(self, my_params, other_params):
         return -torch.log(5 * torch.norm(my_params - other_params))

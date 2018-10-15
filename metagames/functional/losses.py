@@ -31,12 +31,14 @@ class CopyLoss(BaseLoss):
 class Play0Loss(BaseLoss):
     """Play the first action."""
 
-    def __call__(self, *, action_logit):
+    def __call__(self, *, action_logit, **kwargs):
+        del kwargs
         return -action_logit
 
 
 class Play1Loss(BaseLoss):
     """Play the second action."""
 
-    def __call__(self, *, action_logit):
+    def __call__(self, *, action_logit, **kwargs):
+        del kwargs
         return action_logit
