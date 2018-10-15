@@ -8,6 +8,7 @@ import torch
 from . import agents
 from . import experiment
 from . import losses
+from metagames import game
 
 EXPERIMENTS = {
     "self_play_self_aware": functools.partial(experiment.SelfPlayExperiment, self_aware=True),
@@ -15,14 +16,14 @@ EXPERIMENTS = {
 }
 
 
-GAMES = {"prisoners_dilemma": np.array([[-1, -3], [0, 2]], dtype=float)}
+GAMES = {"prisoners_dilemma": game.PRISONERS_DILEMMA}
 
 AGENTS = {
     "dot": agents.DotProductAgent,
     "sum": agents.SumAgent,
     "selfish": agents.SelfishAgent,
-    "cooperate": agents.Play1Agent,
     "defect": agents.Play0Agent,
+    "cooperate": agents.Play1Agent,
     "linear": agents.LinearAgent,
     "simple-linear": agents.SimpleLinearAgent,
     "clique": agents.SimilarityAgent,
@@ -32,8 +33,8 @@ AGENTS = {
 LOSSES = {
     "utility": losses.UtilityLoss,
     "copy": losses.CopyLoss,
-    "cooperate": losses.Play1Loss,
     "defect": losses.Play0Loss,
+    "cooperate": losses.Play1Loss,
 }
 
 OPTIMIZERS = {"grad": torch.optim.SGD, "adam": torch.optim.Adam, "lbfgs": torch.optim.LBFGS}
