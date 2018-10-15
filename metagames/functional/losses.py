@@ -33,7 +33,7 @@ class Play0Loss(BaseLoss):
 
     def __call__(self, *, action_logit, **kwargs):
         del kwargs
-        return -action_logit
+        return action_logit
 
 
 class Play1Loss(BaseLoss):
@@ -41,4 +41,4 @@ class Play1Loss(BaseLoss):
 
     def __call__(self, *, action_logit, **kwargs):
         del kwargs
-        return action_logit
+        return -action_logit

@@ -207,13 +207,27 @@ class SelfPlayExperiment(Experiment):
         self.self_aware = self_aware
 
     def _make_player_opponents(self, players):
-        print(self.self_aware)
         if self.self_aware:
             return [(player, (player,)) for player in players]
         else:
             # The detached version is a reference that has the same value as the original
             # parameters, so it is unnecessary to update on every gradient step.
             return [(player, (player._replace(parameters=player.parameters.detach()),)) for player in players]
+
+
+class DuelExperiment(Experiment):
+    """Two player compete. They may have different parameter sizes."""
+
+    def _make_player_opponents(self, players):
+        first, second = players
+        return [(first, (second,)), (second, (first,))]
+
+
+class FreeForAllExperiment(Experiment):
+    """Every player competes against every other player."""
+
+    def _make_player_opponents(self, players):
+        return [(player, players[:i] + players[i + 1 :]) for (i, player) in enumerate(players)]
 
 
 def _tensor_data(tensor):
