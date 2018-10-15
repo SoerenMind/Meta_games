@@ -215,6 +215,13 @@ class SelfPlayExperiment(Experiment):
             return [(player, (player._replace(parameters=player.parameters.detach()),)) for player in players]
 
 
+class DuelExperiment(Experiment):
+    """Two player compete. They may have different parameter sizes."""
+    def _make_player_opponents(self, players):
+        first, second = players
+        return [(first, (second,)), (second, (first,))]
+
+
 def _tensor_data(tensor):
     """The contents of a torch tensor as a numpy array."""
     return tensor.detach().cpu().numpy()

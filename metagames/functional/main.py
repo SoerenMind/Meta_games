@@ -1,6 +1,7 @@
 """High-level interface to open-source game experiments.
 """
 import functools
+import time
 
 import numpy as np
 import torch
@@ -13,6 +14,7 @@ from metagames import game
 EXPERIMENTS = {
     "self_play_self_aware": functools.partial(experiment.SelfPlayExperiment, self_aware=True),
     "self_play_self_unaware": functools.partial(experiment.SelfPlayExperiment, self_aware=False),
+    "duel": experiment.DuelExperiment,
 }
 
 
@@ -74,13 +76,27 @@ def run_experiment(
     Returns:
         A dictionary of the run data.
     """
+    start_timestamp = time.time()
 
     payoff_matrix = GAMES[game]
     experiment_runner = EXPERIMENTS[experiment](payoff_matrix, dtype=torch.double)
     player_specifications = prepare_player_specifications(
         agents_config, default_config=default_agent_config, agent_seed=agent_seed
     )
-    return experiment_runner.run(player_specifications=player_specifications, num_steps=num_steps, seed=parameter_seed)
+    data = experiment_runner.run(player_specifications=player_specifications, num_steps=num_steps, seed=parameter_seed)
+
+    data["args"] = {
+        "experiment": experiment,
+        "game": game,
+        "num_steps": num_steps,
+        "agents_config": agents_config,
+        "default_agent_config": default_agent_config,
+        "agent_seed": agent_seed,
+        "parameter_seed": parameter_seed,
+    }
+    data["timestamp_start"] = start_timestamp
+    data["timestamp_end"] = time.time()
+    return data
 
 
 def prepare_player_specifications(agents_config, default_config=None, agent_seed=None):
@@ -143,7 +159,7 @@ def prepare_player_specifications(agents_config, default_config=None, agent_seed
         try:
             agent_name = agent_config["name"]
         except KeyError:
-            agent_name = default_config.get('name', agent_cls.__name__)
+            agent_name = default_config.get("name", agent_cls.__name__)
         num_players = get_config(agent_config, "num_players", 1)
 
         for j in range(num_players):
