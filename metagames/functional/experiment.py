@@ -217,9 +217,17 @@ class SelfPlayExperiment(Experiment):
 
 class DuelExperiment(Experiment):
     """Two player compete. They may have different parameter sizes."""
+
     def _make_player_opponents(self, players):
         first, second = players
         return [(first, (second,)), (second, (first,))]
+
+
+class FreeForAllExperiment(Experiment):
+    """Every player competes against every other player."""
+
+    def _make_player_opponents(self, players):
+        return [(player, players[:i] + players[i + 1 :]) for (i, player) in enumerate(players)]
 
 
 def _tensor_data(tensor):

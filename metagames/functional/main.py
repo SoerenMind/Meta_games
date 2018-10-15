@@ -15,6 +15,7 @@ EXPERIMENTS = {
     "self_play_self_aware": functools.partial(experiment.SelfPlayExperiment, self_aware=True),
     "self_play_self_unaware": functools.partial(experiment.SelfPlayExperiment, self_aware=False),
     "duel": experiment.DuelExperiment,
+    "free_for_all": experiment.FreeForAllExperiment,
 }
 
 

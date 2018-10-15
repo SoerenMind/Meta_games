@@ -120,9 +120,9 @@ class SelfishAgent(OpenSourceBinaryGameAgent):
 class _ConstantAgent(OpenSourceBinaryGameAgent):
     """Plays actions with a constant probability."""
 
-    def __init__(self, action_logit, **kwargs):
+    def __init__(self, action_logit, dtype=torch.double, **kwargs):
         super().__init__(**kwargs)
-        self.action_logit = torch.tensor(action_logit, requires_grad=True)
+        self.action_logit = torch.tensor(action_logit, dtype=dtype, requires_grad=True)
 
     def forward(self, my_params, other_params):
         del my_params, other_params
