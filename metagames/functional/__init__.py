@@ -2,5 +2,6 @@
 from . import agents
 from . import experiment
 from . import losses
+from . import main
 
-__all__= ['agents', 'experiment', 'losses']
+__all__ = ["agents", "experiment", "losses", "main"]
