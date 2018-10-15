@@ -142,7 +142,7 @@ def prepare_player_specifications(agents_config, default_config=None, agent_seed
         try:
             agent_name = agent_config["name"]
         except KeyError:
-            agent_name = "{:s}_{:d}".format(default_config.get("name", agent_cls.__name__), i)
+            agent_name = default_config.get('name', agent_cls.__name__)
         num_players = get_config(agent_config, "num_players", 1)
 
         for j in range(num_players):

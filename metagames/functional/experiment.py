@@ -207,6 +207,7 @@ class SelfPlayExperiment(Experiment):
         self.self_aware = self_aware
 
     def _make_player_opponents(self, players):
+        print(self.self_aware)
         if self.self_aware:
             return [(player, (player,)) for player in players]
         else:
