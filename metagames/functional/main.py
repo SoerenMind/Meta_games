@@ -71,7 +71,7 @@ def prepare_player_specifications(agents_config, default_config=None, agent_seed
         agent = agent_cls(
             num_parameters=num_parameters,
             num_opponent_parameters=num_opponent_parameters,
-            rand=np.random.RandomState(rand.randint(2**32)),
+            rand=np.random.RandomState(rand.randint(2 ** 32)),
             dtype=torch.double,
         )
 
@@ -83,12 +83,12 @@ def prepare_player_specifications(agents_config, default_config=None, agent_seed
         try:
             agent_name = agent_config["name"]
         except KeyError:
-            agent_name = f"{default_config.get('name', agent_cls.__name__)}_{i}"
+            agent_name = "{:s}_{:d}".format(default_config.get("name", agent_cls.__name__), i)
         num_players = get_config(agent_config, "num_players", 1)
 
         for j in range(num_players):
             if num_players > 1:
-                player_name = f"{agent_name}_{j}"
+                player_name = "{:s}_{:d}".format(agent_name, j)
             else:
                 player_name = agent_name
 

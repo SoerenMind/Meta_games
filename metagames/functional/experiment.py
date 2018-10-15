@@ -1,14 +1,12 @@
 """Experiments with functional-form agents."""
+import collections
 import itertools
 import math
-import typing
 
 import numpy as np
 import torch
 
 from metagames import game
-from . import agents
-from . import losses
 
 
 def scaled_normal_initializer(rand, num_parameters):
@@ -16,7 +14,11 @@ def scaled_normal_initializer(rand, num_parameters):
     return rand.normal(scale=1 / math.sqrt(num_parameters), size=(num_parameters,))
 
 
-class PlayerSpecification(typing.NamedTuple):
+class PlayerSpecification(
+    collections.namedtuple(
+        "PlayerSpecification", ["agent", "initializer", "loss", "optimizer", "learning_rate", "step_rate", "name"]
+    )
+):
     """A player specification for an experiment.
 
     Attributes:
@@ -30,21 +32,13 @@ class PlayerSpecification(typing.NamedTuple):
         name: An optional player name.
     """
 
-    agent: agents.OpenSourceBinaryGameAgent
-    initializer: typing.Any = scaled_normal_initializer
-    loss: losses.BaseLoss = losses.UtilityLoss
-    optimizer: typing.Type[torch.optim.Optimizer] = torch.optim.SGD
-    learning_rate: float = None
-    step_rate: int = 1
-    name: str = None
+    pass
 
 
-class _ExperimentPlayer(typing.NamedTuple):
+class _ExperimentPlayer(collections.namedtuple("_ExperimentPlayer", ["spec", "parameters", "optimizer"])):
     """An initialized experiment player."""
 
-    spec: PlayerSpecification
-    parameters: torch.Tensor
-    optimizer: torch.optim.Optimizer
+    pass
 
 
 class Experiment:
