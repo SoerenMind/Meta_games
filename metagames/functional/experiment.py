@@ -48,23 +48,46 @@ class _ExperimentPlayer(typing.NamedTuple):
 
 
 class Experiment:
-    """Base experiment runner class."""
+    """Base experiment runner class.
 
-    def __init__(self, payoff_matrix, dtype=torch.double):
-        self.payoff_matrix = torch.tensor(payoff_matrix)
+    Subclasses must implement _make_player_opponents.
+    """
 
-    def _run_steps(self, player_opponents, max_steps=None):
-        """Generator of experiment steps.
+    def __init__(self, payoff_matrix, dtype=None):
+        """Initialize an experiment runner.
 
         Args:
-            player_opponents: A list of (player, opponent_function) pairs.
-                An opponent function takes the current step index and
-                outputs an iterable of opponent players.
+            payoff_matrix: The game payoff matrix for the first player.
+                An 2x2 numpy array where cell [i, j] is the payoff to the first player
+                if they play action `i` and the opponent plays action `j`.
+            dtype: Tensor data type.
+        """
+        if dtype is None:
+            dtype = torch.double
+
+        self.payoff_matrix = torch.tensor(payoff_matrix, dtype=dtype)
+
+    def run(self, player_specifications, num_steps, seed=None):
+        data = {"players": player_specifications, "num_steps": num_steps, "seed": seed}
+        data["steps"] = list(self.run_steps(player_specifications, seed=seed, max_steps=num_steps))
+        return data
+
+    def run_steps(self, player_specifications, max_steps=None, seed=None):
+        """Yield experiment steps.
+
+        Args:
+            player_specifications: A list of `PlayerSpecification` describing the players.
+                Multiple players may be specificied but it acts as a
+                batch of independent players that play only against themselves.
+            seed: Parameter initialization seed.
             max_steps: Optional maximum number of steps to run.
 
         Yields:
             For each step, a dictionary of step statistics.
         """
+        players = self._initialize_players(player_specifications, seed=seed)
+        player_opponents = self._make_player_opponents(players)
+
         if max_steps:
             steps = range(max_steps)
         else:
@@ -76,6 +99,10 @@ class Experiment:
                 player_update_statistics = self._update_player(player, opponents)
                 step_statistics["player_updates"].append(player_update_statistics)
             yield step_statistics
+
+    def _make_player_opponents(self, players):
+        """Make a list of (player, opponents) pairs."""
+        raise NotImplementedError
 
     def _initialize_players(self, player_specifications, seed=None):
         """Initialize players from a list of player specifications.
@@ -105,7 +132,7 @@ class Experiment:
             players.append(_ExperimentPlayer(spec=player_spec, optimizer=optimizer, parameters=parameters))
         return players
 
-    def play_game(self, agent, parameters, opponent_agent, opponent_parameters):
+    def _play_game(self, agent, parameters, opponent_agent, opponent_parameters):
         """Play a game against an opponent."""
         action_logit = agent(parameters, opponent_parameters)
         opponent_action_logit = opponent_agent(opponent_parameters, parameters)
@@ -117,7 +144,7 @@ class Experiment:
 
     def _play_game_grad(self, agent, parameters, loss_fn, opponent_agent, opponent_parameters):
         """Play against an opponent and update player gradients."""
-        results = self.play_game(agent, parameters, opponent_agent, opponent_parameters)
+        results = self._play_game(agent, parameters, opponent_agent, opponent_parameters)
         statistics = {name: _tensor_data(value) for name, value in results.items()}
 
         loss = loss_fn(**results, parameter_vector=parameters, opponent_parameter_vector=opponent_parameters)
@@ -171,34 +198,27 @@ class Experiment:
 class SelfPlayExperiment(Experiment):
     """All players play against themselves only."""
 
-    def run_steps(self, player_specifications, self_aware, seed=None, max_steps=None):
-        """Generator of player updates.
+    def __init__(self, payoff_matrix, self_aware=False, dtype=None):
+        """Initialize a self-play experiment.
 
         Args:
-            player_specifications: A list of `PlayerSpecification` describing the players.
-                Multiple players may be specificied but it acts as a
-                batch of independent players that play only against themselves.
+            payoff_matrix: The game payoff matrix for the first player.
+                An 2x2 numpy array where cell [i, j] is the payoff to the first player
+                if they play action `i` and the opponent plays action `j`.
             self_aware: Whether the players are aware that they are playing against themselves.
                 If True, gradient flows through the copied opponent parameters.
-            seed: Parameter initialization seed.
-            max_steps: Maximum number of steps to run.
-
+            dtype: Tensor data type.
         """
-        players = self._initialize_players(player_specifications, seed=seed)
-        if self_aware:
-            player_opponents = [(player, (player,)) for player in players]
-        else:
-            # Note: The detached version is a reference that has the same value as the original
-            # parameters, so it is unnecessary to update on every gradient step.
-            player_opponents = [
-                (player, (player._replace(parameters=player.parameters.detach()),)) for player in players
-            ]
-        yield from self._run_steps(player_opponents, max_steps=max_steps)
+        super().__init__(payoff_matrix=payoff_matrix, dtype=dtype)
+        self.self_aware = self_aware
 
-    def run(self, player_specifications, num_steps, self_aware, seed=None):
-        data = {"players": player_specifications, "num_steps": num_steps, "self_aware": self_aware, "seed": seed}
-        data["steps"] = list(self.run_steps(player_specifications, self_aware, seed=seed, max_steps=num_steps))
-        return data
+    def _make_player_opponents(self, players):
+        if self.self_aware:
+            return [(player, (player,)) for player in players]
+        else:
+            # The detached version is a reference that has the same value as the original
+            # parameters, so it is unnecessary to update on every gradient step.
+            return [(player, (player._replace(parameters=player.parameters.detach()),)) for player in players]
 
 
 def _tensor_data(tensor):
