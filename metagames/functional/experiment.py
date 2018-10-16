@@ -1,17 +1,19 @@
 """Experiments with functional-form agents."""
 import collections
 import itertools
+import logging
 import math
 
 import numpy as np
 import torch
 
+from . import data as mf_data
 from metagames import game
 
 
 def scaled_normal_initializer(rand, num_parameters):
     """Initialize from a normal distribution scaled to give norm near 1."""
-    return rand.normal(scale=1 / math.sqrt(num_parameters), size=(num_parameters,))
+    return rand.normal(scale=1 / math.sqrt(min(num_parameters, 1)), size=(num_parameters,))
 
 
 class PlayerSpecification(
@@ -36,7 +38,13 @@ class PlayerSpecification(
 
 
 class _ExperimentPlayer(collections.namedtuple("_ExperimentPlayer", ["spec", "parameters", "optimizer"])):
-    """An initialized experiment player."""
+    """An initialized experiment player.
+
+    Attributes:
+        spec: The player specification. A `PlayerSpecification`.
+        parameters: The player parameter vector as a torch Tensor.
+        optimizer: The initialized optimizer over `parameters`.
+    """
 
     pass
 
@@ -61,9 +69,19 @@ class Experiment:
 
         self.payoff_matrix = torch.tensor(payoff_matrix, dtype=dtype)
 
-    def run(self, player_specifications, num_steps, seed=None):
+    def run(self, player_specifications, num_steps, seed=None, logger=None):
         data = {"players": player_specifications, "num_steps": num_steps, "seed": seed}
-        data["steps"] = list(self.run_steps(player_specifications, seed=seed, max_steps=num_steps))
+
+        steps = self.run_steps(player_specifications, seed=seed, max_steps=num_steps)
+
+        if logger is not None:
+            steps_data = []
+            for step_index, step_data in enumerate(steps):
+                logger(step_index, step_data)
+                steps_data.append(step_data)
+        else:
+            steps_data = list(steps)
+        data["steps"] = steps_data
         return data
 
     def run_steps(self, player_specifications, max_steps=None, seed=None):
@@ -216,11 +234,30 @@ class SelfPlayExperiment(Experiment):
 
 
 class DuelExperiment(Experiment):
-    """Two player compete. They may have different parameter sizes."""
+    """Two agents compete. They may have different parameter sizes."""
 
     def _make_player_opponents(self, players):
-        first, second = players
-        return [(first, (second,)), (second, (first,))]
+        # If there are exactly two players, they compete
+        try:
+            first, second = players
+        except ValueError:
+            pass
+        else:
+            return [(first, (second,)), (second, (first,))]
+
+        # If there are more than 2 players, there must be exactly 2 unique agents.
+        # Each players of one agent plays against all players of the other agent and
+        # vice versa.
+        agent_ids = set(id(player.spec.agent) for player in players)
+        agent_players = {agent_id: [] for agent_id in agent_ids}
+        for player in players:
+            agent_players[id(player.spec.agent)].append(player)
+
+        try:
+            firsts, seconds = agent_players.values()
+        except ValueError:
+            raise ValueError("There must be exactly 2 agents.")
+        return [(first, seconds) for first in firsts] + [(second, firsts) for second in seconds]
 
 
 class FreeForAllExperiment(Experiment):
@@ -228,6 +265,25 @@ class FreeForAllExperiment(Experiment):
 
     def _make_player_opponents(self, players):
         return [(player, players[:i] + players[i + 1 :]) for (i, player) in enumerate(players)]
+
+
+class ExperimentLogger:
+    def __init__(self, log_every_n, substep_keys=("grad_norm",), round_keys=("utility",)):
+        self.log_every_n = log_every_n
+        self.substep_keys = substep_keys
+        self.round_keys = round_keys
+        self.recorded_data = {}
+
+    def __call__(self, step_index, step_data):
+        step_statistics = mf_data.experiment_single_step_statistics(
+            step_data, substep_keys=self.substep_keys, round_keys=self.round_keys, statistic_types=("mean",)
+        )
+        mf_data.append_step_statistics(self.recorded_data, step_statistics)
+        if not (step_index + 1) % self.log_every_n:
+            for player, player_stats in self.recorded_data.items():
+                for key, values in player_stats.items():
+                    print("Step %d, Player %s, %s %f" % (step_index, player, key, np.mean(values["mean"])))
+            self.recorded_data = {}
 
 
 def _tensor_data(tensor):

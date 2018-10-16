@@ -7,15 +7,15 @@ import numpy as np
 import torch
 
 from . import agents
-from . import experiment
+from . import experiment as mf_experiment
 from . import losses
 from metagames import game
 
 EXPERIMENTS = {
-    "self_play_self_aware": functools.partial(experiment.SelfPlayExperiment, self_aware=True),
-    "self_play_self_unaware": functools.partial(experiment.SelfPlayExperiment, self_aware=False),
-    "duel": experiment.DuelExperiment,
-    "free_for_all": experiment.FreeForAllExperiment,
+    "self_play_self_aware": functools.partial(mf_experiment.SelfPlayExperiment, self_aware=True),
+    "self_play_self_unaware": functools.partial(mf_experiment.SelfPlayExperiment, self_aware=False),
+    "duel": mf_experiment.DuelExperiment,
+    "free_for_all": mf_experiment.FreeForAllExperiment,
 }
 
 
@@ -43,11 +43,21 @@ LOSSES = {
 OPTIMIZERS = {"grad": torch.optim.SGD, "adam": torch.optim.Adam, "lbfgs": torch.optim.LBFGS}
 
 
-PARAMETER_INITIALIZERS = {"scaled_normal": experiment.scaled_normal_initializer, "zeros": lambda rand, n: np.zeros(n)}
+PARAMETER_INITIALIZERS = {
+    "scaled_normal": mf_experiment.scaled_normal_initializer,
+    "zeros": lambda rand, n: np.zeros(n),
+}
 
 
 def run_experiment(
-    experiment, game, num_steps, agents_config, default_agent_config=None, agent_seed=None, parameter_seed=None
+    experiment,
+    game,
+    num_steps,
+    agents_config,
+    default_agent_config=None,
+    agent_seed=None,
+    parameter_seed=None,
+    log_every_n=None,
 ):
     """Run an open source game play experiment.
 
@@ -59,6 +69,7 @@ def run_experiment(
             from `agents_config`.
         agents_seed: The seed used to initialize the agent structure.
         parameter_seed: The seed used to initialize player parameter vectors.
+        log_every_n: Optionally log data every `n` steps.
 
     The agent configuration dictionary has the following keys:
     AgentConfig:
@@ -69,7 +80,7 @@ def run_experiment(
         initializer: The parameter vector initializer. A key of `PARAMETER_INITIALIZERS`.
         loss: The loss function. A key of `LOSSES`.
         learning_rate: The learning rate.
-        optimizer: The optimizer to sue. A key of `OPTIMIZERS`.
+        optimizer: The optimizer to use. A key of `OPTIMIZERS`.
         step_rate: Number of sub-steps per global step. Optional, defaults to 1.
         num_players: The number of players using this agent.
         name: An optional name for the agent.
@@ -84,7 +95,15 @@ def run_experiment(
     player_specifications = prepare_player_specifications(
         agents_config, default_config=default_agent_config, agent_seed=agent_seed
     )
-    data = experiment_runner.run(player_specifications=player_specifications, num_steps=num_steps, seed=parameter_seed)
+
+    if log_every_n is not None:
+        logger = mf_experiment.ExperimentLogger(log_every_n=log_every_n)
+    else:
+        logger = None
+
+    data = experiment_runner.run(
+        player_specifications=player_specifications, num_steps=num_steps, seed=parameter_seed, logger=logger
+    )
 
     data["args"] = {
         "experiment": experiment,
@@ -170,7 +189,7 @@ def prepare_player_specifications(agents_config, default_config=None, agent_seed
                 player_name = agent_name
 
             player_specifications.append(
-                experiment.PlayerSpecification(
+                mf_experiment.PlayerSpecification(
                     agent=agent,
                     initializer=initializer,
                     loss=loss,
