@@ -16,7 +16,8 @@ def scaled_normal_initializer(rand, num_parameters):
 
 class PlayerSpecification(
     collections.namedtuple(
-        "PlayerSpecification", ["agent", "initializer", "loss", "optimizer", "learning_rate", "step_rate", "name"]
+        "PlayerSpecification", ["agent", "initializer", "loss", "optimizer", "learning_rate", "step_rate",
+                                "n_freeze_player_at", "name"]
     )
 ):
     """A player specification for an experiment.
@@ -29,6 +30,7 @@ class PlayerSpecification(
         optimizer: The player's optimizer class.
         learning_rate: The players's learning rate.
         step_rate: Number of times the player is updated for each global step.
+        n_freeze_player_at: int, specifies when to stop updating parameters (opponents may continue). Usually inf.
         name: An optional player name.
     """
 
@@ -62,8 +64,10 @@ class Experiment:
         self.payoff_matrix = torch.tensor(payoff_matrix, dtype=dtype)
 
     def run(self, player_specifications, num_steps, seed=None):
-        data = {"players": player_specifications, "num_steps": num_steps, "seed": seed}
-        data["steps"] = list(self.run_steps(player_specifications, seed=seed, max_steps=num_steps))
+        data = {"num_steps": num_steps, "seed": seed}
+        steps, players_rep = zip(*list(self.run_steps(player_specifications, seed=seed, max_steps=num_steps)))
+        data["steps"] = steps
+        data["players"] = players_rep[-1]
         return data
 
     def run_steps(self, player_specifications, max_steps=None, seed=None):
@@ -90,9 +94,11 @@ class Experiment:
         for step in steps:
             step_statistics = {"player_updates": []}
             for player, opponents in player_opponents:
+                if step >= player.spec.n_freeze_player_at:
+                    player.parameters.requires_grad_(False)
                 player_update_statistics = self._update_player(player, opponents)
                 step_statistics["player_updates"].append(player_update_statistics)
-            yield step_statistics
+            yield step_statistics, players
 
     def _make_player_opponents(self, players):
         """Make a list of (player, opponents) pairs."""
@@ -103,7 +109,7 @@ class Experiment:
 
         Args:
             player_specifications: The player speceifications.
-                An iterable of _ExperimentPlayer instances.
+                An iterable of PlayerSpecification instances.
             seed: Optional player parameter initialization seed.
                 The per-player seed depends on this seed and their order in `player_specifications`.
         """
@@ -125,6 +131,18 @@ class Experiment:
             optimizer = player_spec.optimizer([parameters], **optimizer_kwargs)
             players.append(_ExperimentPlayer(spec=player_spec, optimizer=optimizer, parameters=parameters))
         return players
+
+    def _eval_player(self, player, opponents):
+        """Play a game against all opponents, just to return stats."""
+        game_statistics = []
+        for i, opponent in enumerate(opponents):
+            game_statistics.append(self._play_game(
+                agent=player.spec.agent,
+                parameters=player.parameters,
+                opponent_agent=opponent.spec.agent,
+                opponent_parameters=opponent.parameters,
+            ))
+        return game_statistics
 
     def _play_game(self, agent, parameters, opponent_agent, opponent_parameters):
         """Play a game against an opponent."""
@@ -184,6 +202,7 @@ class Experiment:
                 [game_stats["utility"] for game_stats in round_statistics["rounds"]]
             )
             statistics.append(round_statistics)
+
             optimizer.step()
 
         return statistics
