@@ -15,6 +15,8 @@ setuptools.setup(
         "torch>=0.4.0a0",
         "torchvision>=0.2",
         "tqdm>=4.24.0",
+        "pyyaml",
+        "scipy"
     ],
     extras_require={},
 )
