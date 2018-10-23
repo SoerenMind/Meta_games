@@ -2,7 +2,7 @@
 import numpy as np
 
 SUBSTEP_KEYS = ("grad_norm",)
-ROUND_KEYS = ("utility", "action_logit", "opponent_action_logit")
+ROUND_KEYS = ("utility", "action_probability", "opponent_action_probability", "action_logit", "opponent_action_logit")
 STATISTIC_FUNCTIONS = {"mean": np.mean, "min": np.min, "max": np.max}
 
 
@@ -86,7 +86,7 @@ def experiment_single_step_statistics(
 
 
 def append_step_statistics(statistics, step_statistics, player_keys=None):
-    """Append signle-step statistics to a dictionary of the same structure containing statistic lists."""
+    """Append single-step statistics to a dictionary of the same structure containing statistic lists."""
     if player_keys is None:
         keyed_step_statistics = enumerate(step_statistics)
     else:
