@@ -66,7 +66,7 @@ def experiment_single_step_statistics(
         statistic_functions = {stat_type: STATISTIC_FUNCTIONS[stat_type] for stat_type in statistic_types}
 
     player_statistics = []
-    for player_step_data in step_data["player_updates"]:
+    for player_step_data in step_data[0]["player_updates"]:
         values = {key: [] for key in keys}
         for player_substep_data in player_step_data:
             for key in substep_keys:
