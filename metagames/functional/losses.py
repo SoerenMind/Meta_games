@@ -25,7 +25,7 @@ class CopyLoss(BaseLoss):
 
     def __call__(self, *, action_logit, opponent_action_logit, **kwargs):
         del kwargs
-        return torch.nn.functional.losses.mse_loss(action_logit, opponent_action_logit)
+        return torch.nn.functional.mse_loss(action_logit, opponent_action_logit)
 
 
 class Play0Loss(BaseLoss):

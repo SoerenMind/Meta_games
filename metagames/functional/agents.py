@@ -85,6 +85,10 @@ class LinearAgent(OpenSourceBinaryGameAgent):
             weights[1, 0] = 1.0
             bias = torch.zeros((num_parameters,), dtype=dtype)
             bias[0] = 1.0
+        elif num_parameters == 0:
+            print(self.num_opponent_parameters, self.num_parameters)
+            weights = torch.zeros((self.num_opponent_parameters, self.num_parameters))
+            bias = torch.zeros((self.num_parameters,))
         else:
             scale = 1 / np.sqrt(num_parameters)
             weights = torch.from_numpy(

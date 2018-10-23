@@ -58,6 +58,7 @@ def run_experiment(
     agent_seed=None,
     parameter_seed=None,
     log_every_n=None,
+    progress_bar=False,
 ):
     """Run an open source game play experiment.
 
@@ -70,6 +71,7 @@ def run_experiment(
         agents_seed: The seed used to initialize the agent structure.
         parameter_seed: The seed used to initialize player parameter vectors.
         log_every_n: Optionally log data every `n` steps.
+        progress_bar: Display a textual progress bar.
 
     The agent configuration dictionary has the following keys:
     AgentConfig:
@@ -102,7 +104,8 @@ def run_experiment(
         logger = None
 
     data = experiment_runner.run(
-        player_specifications=player_specifications, num_steps=num_steps, seed=parameter_seed, logger=logger
+        player_specifications=player_specifications, num_steps=num_steps, seed=parameter_seed, logger=logger,
+        progress_bar=progress_bar
     )
 
     data["args"] = {

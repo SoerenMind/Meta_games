@@ -1,19 +1,20 @@
 """Experiments with functional-form agents."""
 import collections
 import itertools
-import logging
 import math
 
 import numpy as np
 import torch
+import tqdm
+
+from metagames import game
 
 from . import data as mf_data
-from metagames import game
 
 
 def scaled_normal_initializer(rand, num_parameters):
     """Initialize from a normal distribution scaled to give norm near 1."""
-    return rand.normal(scale=1 / math.sqrt(min(num_parameters, 1)), size=(num_parameters,))
+    return rand.normal(scale=1 / math.sqrt(max(num_parameters, 1)), size=(num_parameters,))
 
 
 class PlayerSpecification(
@@ -71,11 +72,15 @@ class Experiment:
 
         self.payoff_matrix = torch.tensor(payoff_matrix, dtype=dtype)
 
-    def run(self, player_specifications, num_steps, seed=None, logger=None):
+
+    def run(self, player_specifications, num_steps, seed=None, logger=None, progress_bar=False):
         data = {"player_specifications": player_specifications, "num_steps": num_steps, "seed": seed}
 
         players = self._initialize_players(player_specifications, seed=seed)
         steps = self.run_steps(player_specifications, seed=seed, max_steps=num_steps, players=players)
+
+        if progress_bar:
+            steps = tqdm.tqdm(steps, total=num_steps)
 
         if logger is not None:
             steps_data = []
@@ -171,7 +176,13 @@ class Experiment:
         action_probability = torch.sigmoid(action_logit)
         opponent_action_probability = torch.sigmoid(opponent_action_logit)
         utility = game.binary_game(self.payoff_matrix, action_probability, opponent_action_probability)
-        return {"utility": utility, "action_logit": action_logit, "opponent_action_logit": opponent_action_logit}
+        return {
+            "utility": utility,
+            "action_probability": action_probability,
+            "opponent_action_probability": opponent_action_probability,
+            "action_logit": action_logit,
+            "opponent_action_logit": opponent_action_logit,
+        }
 
     def _play_game_grad(self, agent, parameters, loss_fn, opponent_agent, opponent_parameters):
         """Play against an opponent and update player gradients."""
