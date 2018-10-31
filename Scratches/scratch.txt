@@ -1,0 +1,192 @@
+PD torch notes
+
+# TODO: First make write-up with things that did/didn't work etc
+-Data means for each setting (linear, LOLA, etc)
+
+
+# TODO: Lookahead
+-Problem: zero_grad erases the gradients from playing against other players
+---Use copy of player? Then transfer gradients?
+---Get grad directly, and apply it to opp_copy!
+---Check if opponent backward actually affects gradients
+---
+-Plot to see if it does anything
+-Try on circling game: dot agents with D-loss vs C-loss
+---Don't use PD
+---Don't use sigmoid
+-Read conditions from SOS
+
+# TODO: Experiments
+-One player aware (should DD)
+-Supervised copy bot
+---Figure out param ratio where it can generalize
+---Differentiate through opponent or not?
+-Sanity check: Different game with strategies dominated by DD
+---Third 'blow yourself up' action (-1000).
+-Look at leader-follower games (ultimatum game)
+-Less than full rank linear (hiding params) - should DD
+-Increase params from 0, 1, 2...
+
+
+# TODO: Summarizing data
+-save data for multiple runs with YAML
+-log TOP BIAS.
+---Average final scores/policies/gradnorms per agent over seeds?
+---Average integral?
+---Average variance over time?
+-Systems:
+---Spreadsheet, each run of main adds under its hyperparams. (Online if n saved.)
+------Problem: New exp group adds to old sheet. Solution: exp group name in HPs
+---Pandas...
+---Graphs: save scores, compute average graph in new script
+---SQLite
+---YAML
+
+
+# TODO: Battle different agent types
+-Optim: LOLA vs non-LOLA, LR, (SOS); Game: objectives; Nets: (diff layer sizes), free params (=layer sizes)
+-Agent dependency: LS[0]_1 = free_params_2 (add free_params hp);
+-Have a tuple (hp1, hp2) for each hp?
+---Populations: Need a new script.
+-Eric's idea: 2 ways to pass in HPs: 1) argparser 2) feed some arg dict to main()
+---Arg variable: read agent descriptions from text/js file and then turn them to dict
+
+
+
+# TODO: use functional agents
+-use args.agent global var (HPs are similar)
+-make agent object(s)
+-create free params for each agent
+-feed into objective
+-use LOLA
+
+
+# TODO: Linear case
+-Attractive because our game is too complex
+-Try freezing one agent!
+-Try symmetric (P = P+P^T)/2
+-Try uneven free params (can always penalize 1-dim bias, so i-1 df left for other i direct weights, which have i-1 df themselves. So evenly matched.)
+
+
+# TODO: variable number of layers
+
+# TODO: Getting cooperation
+Experiment with LR, payoffs(+live change), weight-grad-paths,
+        n_inner_opt_range, layer_sizes, LOLA vs naive, DIFFERENT FREE PARAMS
+-LEARNED: bias=1 led to most stable cooperation
+-LEARNED: lr_out=0.01 and 15k steps is way before convergence
+-LEARNED: see email
+-LEARNED: At -2.8 more cooperation and lr_in=10 more middle-trending.
+
+
+# TODO: SOS
+
+
+# TODO: Matrix subspace
+
+
+# TODO: line profiler
+-Measure framework overhead
+
+
+# TODO: Implement CB, DB, CopyBot
+
+
+# TODO: PSRO
+# TODO: batch higher order LOLA
+# TODO: Learn best response, or implicit function thm
+# TODO: Input own params (relational?)
+# TODO: Scale to coin game
+
+# TODO: batch mode
+-Batch diff initializations? Diff hyperparams? Diff models?
+-For evo dynamics we want to play all PD agents against all PD agents, CBs and DBs
+
+
+-------------------- TODOs before 4 Oct ---------------------
+
+
+# DONE: deepcopy GPU
+-------LEARNED: .to(device) output is not a leaf and cannot be deepcopied.
+------LEARNED: 2 layer with LR_IN=0.00001, LR_OUT=1 was C-C quickly (not sure if stable)!
+
+
+# DONE: Experiment with LR etc
+---LEARNED: Lots of C-D and instability; biases=ones leads to smooth D-D (3 seeds); C-C w/ b=-ones lrout=.1 lrin=1
+---LEARNED: Stuck even with 1 player inactive for 1-2k steps. ==> LR decay based on gradient?
+---LEARNED: Movement around -1.5 increases w/ time
+-Can I do an experiment where opponent-awareness+LOLA has a predictable effect?
+-reproduce modified w/o LOLA
+---Won't be the same w/o subspace
+-DONE: same number of free params: also D-D
+-DONE: Deepcopy net1: does change things
+Hypotheses:
+---It's just updating, not differentiating through update: No, deepcopy changes outcome.
+---Use of other's params in forward is not diff'able
+---Bugs: not reading all params, also updating non-params, different fixed params, wrong payoffs,
+         new OppAwareNet implementation wrong
+---Diff from Autograd:
+------MUCH FEWER FREE PARAMS!
+------Subspace mask, initialization,
+------Adam hyperparams
+
+# TODO: log laptop results to outliner
+
+
+# TODO: Toggle or slider for gradient flow:
+-Problem: doubled compute. Fix w/ set_requires_grad?
+-LEARNED: diff outcomes for .5 weight vs no weight is prob from numerical error
+-Inside true_objective? By picking net class seems right. But that's already done...
+
+
+# TODO: Reproduce Autograd results
+-Matrix subspace
+Subspace:
+-DONE: Get Autograd working (many runs & save images + hyparams?)
+---DONE: restore settings in old commit
+---DONE: Try same settings on workstation
+-Debug through code and observe things
+---LEARNED: Grad ca 10x higher later.
+------LEARNED: (w/o diff through inner) b4 gets big and positive. Otherwise less defection. (w3 also somewhat). Higher layer => higher abs.
+
+---------Toggle remove b4 (or all biases)
+------LEARNED: Relu kills all neurons if in any layer all activations are zero.
+------LEARNED: Higher layer grad tends to be bigger.
+
+---x) Why does it keep converging back to .5/.5?
+------Got smth to do with biases?
+------LEARNED: weight 0 goes to C-C after 6k steps LOLA.
+-Do 1st layer subspace, subspace mask or P=eye in Autograd
+-...and in Pytorch
+---Testing:
+------LEARNED: Outcomes with non-LOLA hard to distinguish at first
+------Test if LOLA makes the difference: diff seeds, diff architectures
+------Test if different initialization from .5/.5 changes things
+---------Normal biases led to CD so far!
+------Test if alternating GD 1) works with autograd non-LOLA 2) if joint GD fails in Pytorch
+------MAIN VARIABLES: alternating, biases normal, lr
+
+
+
+
+# DONE: OSPD - why LOLA effectless?
+-LEARNED: LOLA+OppAwareNet does have effect in OSIPD
+-LEARNED: scores are slightly different
+-LEARNED: NoInputFcNet has same issue# TODO: Make it so I don't watch graphs
+-Live plotting in SciView?
+-Write directly into file on desktop
+-LEARNED: Bigger effect for 250 steps, modified, lr=2.
+-Hypotheses: LR wrong, more iters needed, diff seed,
+     net2_ not updated, net2_ not differentiably updated, require_grad,
+     use old _parameters code, bug in OppAwareNet
+     change architecture, PD has non-zero change too,
+     copy autograd hyperparams,
+-did this work previously?
+-debug through code
+
+
+
+
+
+
+# TODO: Toggle gradient flow: Inside true_objective? By picking net class seems right. But that's already done...

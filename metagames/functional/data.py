@@ -23,7 +23,7 @@ def experiment_step_statistics(
         A nested dictionary of player_name => attribute_key => statistic_type => values
     """
     keys = tuple(substep_keys) + tuple(round_keys)
-    player_names = tuple(player.name for player in data["players"])
+    player_names = tuple(player.spec.name for player in data["players"])
     if len(set(player_names)) != len(player_names):  # Non-unique names
         player_names = tuple("{:d}_{:s}".format(i, name) for i, name in enumerate(player_names))
 
@@ -66,7 +66,7 @@ def experiment_single_step_statistics(
         statistic_functions = {stat_type: STATISTIC_FUNCTIONS[stat_type] for stat_type in statistic_types}
 
     player_statistics = []
-    for player_step_data in step_data["player_updates"]:
+    for player_step_data in step_data[0]["player_updates"]:
         values = {key: [] for key in keys}
         for player_substep_data in player_step_data:
             for key in substep_keys:

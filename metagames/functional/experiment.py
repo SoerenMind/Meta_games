@@ -2,6 +2,7 @@
 import collections
 import itertools
 import math
+from copy import deepcopy
 
 import numpy as np
 import torch
@@ -19,7 +20,8 @@ def scaled_normal_initializer(rand, num_parameters):
 
 class PlayerSpecification(
     collections.namedtuple(
-        "PlayerSpecification", ["agent", "initializer", "loss", "optimizer", "learning_rate", "step_rate", "name"]
+        "PlayerSpecification", ["agent", "initializer", "loss", "optimizer", "learning_rate", "step_rate",
+                                "n_freeze_player_at", "lookahead", "name"]
     )
 ):
     """A player specification for an experiment.
@@ -32,6 +34,8 @@ class PlayerSpecification(
         optimizer: The player's optimizer class.
         learning_rate: The players's learning rate.
         step_rate: Number of times the player is updated for each global step.
+        n_freeze_player_at: int, specifies when to stop updating parameters (opponents may continue). Usually inf.
+        lookahead: bool, if True, player optimizes by simulating one opponent gradient step and using the gradient there
         name: An optional player name.
     """
 
@@ -70,10 +74,12 @@ class Experiment:
 
         self.payoff_matrix = torch.tensor(payoff_matrix, dtype=dtype)
 
-    def run(self, player_specifications, num_steps, seed=None, logger=None, progress_bar=False):
-        data = {"players": player_specifications, "num_steps": num_steps, "seed": seed}
 
-        steps = self.run_steps(player_specifications, seed=seed, max_steps=num_steps)
+    def run(self, player_specifications, num_steps, seed=None, logger=None, progress_bar=False):
+        data = {"player_specifications": player_specifications, "num_steps": num_steps, "seed": seed}
+
+        players = self._initialize_players(player_specifications, seed=seed)
+        steps = self.run_steps(player_specifications, seed=seed, max_steps=num_steps, players=players)
 
         if progress_bar:
             steps = tqdm.tqdm(steps, total=num_steps)
@@ -86,9 +92,10 @@ class Experiment:
         else:
             steps_data = list(steps)
         data["steps"] = steps_data
+        data['players'] = players
         return data
 
-    def run_steps(self, player_specifications, max_steps=None, seed=None):
+    def run_steps(self, player_specifications, max_steps=None, seed=None, players=None):
         """Yield experiment steps.
 
         Args:
@@ -101,7 +108,8 @@ class Experiment:
         Yields:
             For each step, a dictionary of step statistics.
         """
-        players = self._initialize_players(player_specifications, seed=seed)
+        if players is None:
+            players = self._initialize_players(player_specifications, seed=seed)
         player_opponents = self._make_player_opponents(players)
 
         if max_steps:
@@ -112,9 +120,11 @@ class Experiment:
         for step in steps:
             step_statistics = {"player_updates": []}
             for player, opponents in player_opponents:
+                if step >= player.spec.n_freeze_player_at:
+                    player.parameters.requires_grad_(False)
                 player_update_statistics = self._update_player(player, opponents)
                 step_statistics["player_updates"].append(player_update_statistics)
-            yield step_statistics
+            yield step_statistics, players
 
     def _make_player_opponents(self, players):
         """Make a list of (player, opponents) pairs."""
@@ -125,7 +135,7 @@ class Experiment:
 
         Args:
             player_specifications: The player speceifications.
-                An iterable of _ExperimentPlayer instances.
+                An iterable of PlayerSpecification instances.
             seed: Optional player parameter initialization seed.
                 The per-player seed depends on this seed and their order in `player_specifications`.
         """
@@ -148,14 +158,31 @@ class Experiment:
             players.append(_ExperimentPlayer(spec=player_spec, optimizer=optimizer, parameters=parameters))
         return players
 
+    def _eval_player(self, player, opponents):
+        """Play a game against all opponents, just to return stats."""
+        game_statistics = []
+        for i, opponent in enumerate(opponents):
+            game_statistics.append(self._play_game(
+                agent=player.spec.agent,
+                parameters=player.parameters,
+                opponent_agent=opponent.spec.agent,
+                opponent_parameters=opponent.parameters,
+            ))
+        return game_statistics
+
     def _play_game(self, agent, parameters, opponent_agent, opponent_parameters):
         """Play a game against an opponent."""
         action_logit = agent(parameters, opponent_parameters)
         opponent_action_logit = opponent_agent(opponent_parameters, parameters)
-
         action_probability = torch.sigmoid(action_logit)
         opponent_action_probability = torch.sigmoid(opponent_action_logit)
-        utility = game.binary_game(self.payoff_matrix, action_probability, opponent_action_probability)
+
+        # Utility for circling game wit dot agents
+        if list(self.payoff_matrix.shape) == []:
+            # TODO(sorenmind): Change sign for player 2
+            utility = action_logit
+        else:
+            utility = game.binary_game(self.payoff_matrix, action_probability, opponent_action_probability)
         return {
             "utility": utility,
             "action_probability": action_probability,
@@ -164,55 +191,85 @@ class Experiment:
             "opponent_action_logit": opponent_action_logit,
         }
 
-    def _play_game_grad(self, agent, parameters, loss_fn, opponent_agent, opponent_parameters):
+    def _play_game_grad(self, player, opponent):
         """Play against an opponent and update player gradients."""
-        results = self._play_game(agent, parameters, opponent_agent, opponent_parameters)
+
+        agent = player.spec.agent
+        parameters = player.parameters
+        loss_fn = player.spec.loss()
+
+        results = self._play_game(agent, parameters, opponent.spec.agent, opponent.parameters)
         statistics = {name: _tensor_data(value) for name, value in results.items()}
 
-        loss = loss_fn(**results, parameter_vector=parameters, opponent_parameter_vector=opponent_parameters)
+        loss = loss_fn(**results, parameter_vector=parameters, opponent_parameter_vector=opponent.parameters)
+        opp_requires_grad = opponent.parameters.requires_grad
+        # TODO: does this throw away the accumulated gradient? I think not.
+        opponent.parameters.requires_grad_(False)
+        loss.backward()
+        opponent.parameters.requires_grad_(opp_requires_grad)
+        return statistics
 
+    def _play_game_lookahead_grad(self, player, opponent):
+        """Play against an opponent and update player gradients with lookahead gradient of other player."""
+        agent = player.spec.agent
+        parameters = player.parameters
+        loss_fn = player.spec.loss()
+
+        # First record stats
+        results_no_lookahead = self._play_game(agent, parameters, opponent.spec.agent, opponent.parameters)
+        statistics = {name: _tensor_data(value) for name, value in results_no_lookahead.items()}
+
+        # Let opponent do a naive update
+        opp_copy = deepcopy(opponent)
+        opp_copy.parameters.requires_grad_(True)
+        opp_copy.optimizer.zero_grad()
+        self._play_game_grad(opp_copy, player)
+        opp_copy.optimizer.step()
+        results_lookahead = self._play_game(agent, parameters, opp_copy.spec.agent, opp_copy.parameters)
+
+        # TODO: zero_grad erases the gradients from playing against other players
+        player.optimizer.zero_grad()    # May have accumulated from opponent loss.backward
+        loss = loss_fn(**results_lookahead, parameter_vector=parameters, opponent_parameter_vector=opp_copy.parameters)
         loss.backward()
 
         return statistics
 
     def _update_player(self, player, opponents, update_steps=None):
         """Update a player from plays against a set of opponents.
+        Player may take multiple update steps ('rounds').
 
         Args:
             player: The player to update. An instance of _ExperimentPlayer.
             opponents: The opponents. An iterable of _ExperimentPlayer.
             update_steps: Override the number of gradient descent steps performed.
-                By default, uses player.spec.step_rate.
+                By default, uses player.spec.step_rate. This allows a player to update more
+                often than others.
         """
         if update_steps is None:
             update_steps = player.spec.step_rate
 
-        agent = player.spec.agent
-        parameters = player.parameters
-        optimizer = player.optimizer
-        loss_fn = player.spec.loss()
-
         statistics = []
+        # TODO: remove
+        if player.spec.lookahead:
+            accum_grad_fn = self._play_game_lookahead_grad
+        else:
+            accum_grad_fn = self._play_game_grad
         for _ in range(update_steps):
-            optimizer.zero_grad()
+            player.optimizer.zero_grad()
 
             round_statistics = {"rounds": []}
+            # Accumulate gradients against each opponent
             for opponent in opponents:
-                game_statistics = self._play_game_grad(
-                    agent=agent,
-                    parameters=parameters,
-                    loss_fn=loss_fn,
-                    opponent_agent=opponent.spec.agent,
-                    opponent_parameters=opponent.parameters,
-                )
+                game_statistics = accum_grad_fn(player, opponent=opponent)
                 round_statistics["rounds"].append({"opponent": opponent.spec, **game_statistics})
 
-            round_statistics["grad_norm"] = _tensor_data(torch.norm(parameters.grad))
+            round_statistics["grad_norm"] = _tensor_data(torch.norm(player.parameters.grad))
             round_statistics["mean_utility"] = np.mean(
                 [game_stats["utility"] for game_stats in round_statistics["rounds"]]
             )
             statistics.append(round_statistics)
-            optimizer.step()
+
+            player.optimizer.step()
 
         return statistics
 

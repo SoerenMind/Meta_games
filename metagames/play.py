@@ -38,8 +38,8 @@ def parse_args(args=None):
                      metavar='BOOL, 0<=FLOAT,=1',
                      help='1st arg: bool to give 0 < weight < 1 to gradient through self and 1-weight \ '
                           'through opponent. 2nd arg: the weight.')
-    par.add_argument('--lr-out', type=float, default=0.01, help='Learning rate for regular optimization (outer loop)')
-    par.add_argument('--lr-in', type=float, default=0.1, help='Learning rate for LOLA optimization (inner loop)')
+    par.add_argument('--lr-out', type=float, default=0.1, help='Learning rate for regular optimization (outer loop)')
+    par.add_argument('--lr-in', type=float, default=1., help='Learning rate for LOLA optimization (inner loop)')
     par.add_argument('--optim-algo', default='SGD', metavar='SGD or Adam')
     par.add_argument('--joint-optim', action='store_true', default=False, help='Joint descent of all agents')
     par.add_argument('--n-outer-opt', type=int, default=40000, help='N training steps')
@@ -187,6 +187,50 @@ class OppAwareNetSubspace(torch.nn.Module):
         # out = F.leaky_relu(out.mm(w3) + self.b3, negative_slope=1/5.5)
         # out =              out.mm(w4) + self.b4
         return out.view(-1)
+
+
+class OppAwareLinearNetSubspace(torch.nn.Module):
+    """A linear net that takes another net's parameters as input, with parameters trained in a subspace."""
+    def __init__(self, hp, diff_seed):
+        super(OppAwareLinearNetSubspace, self).__init__()
+        LS = hp.layer_sizes
+        n_free_params = LS[0]
+        n_direct_params = sum([(m + hp.biases) * n for (m, n) in zip(hp.layer_sizes[:-1], hp.layer_sizes[1:])])
+        exp_row_norm = np.sqrt(n_direct_params)
+
+        self.subs_params = torch.nn.Parameter(torch.zeros(n_free_params))
+
+        # Initial params remain unchanged; define offset of subspace
+        torch.manual_seed(diff_seed)    # Ensures different init for net
+        self.w1_init = FloatTensor(LS[0], LS[1]).normal_(0, hp.init_std)
+        self.b1_init = FloatTensor(LS[1])
+        # self.w2_init = FloatTensor(LS[1], LS[2]).normal_(0, hp.init_std)
+        # self.b2_init = FloatTensor(LS[2])
+        init_biases([self.b1_init], hp)
+
+        torch.manual_seed(hp.seed)      # Ensures same subspace
+        # Sample a random ~orthonormal matrix consisting of the following submatrices
+        self.w1_subspace = FloatTensor(LS[0], LS[0], LS[1]).normal_(0, 1 / exp_row_norm)
+        self.b1_subspace = FloatTensor(LS[0], LS[1])
+        init_bias_subspaces([self.b1_subspace], hp, exp_row_norm)
+
+        self.optimizer = hp.optim_algo(self.parameters(), lr=hp.lr_out)
+        # self.mask_w1 = torch.FloatTensor(10, 10).uniform_() > 0.8     # bit mask
+
+    def forward(self, net2):
+        # params2_flat = torch.cat([param.view(-1) for param in net2.parameters()])
+        assert len(list(net2.parameters())) == 1
+        # Compute direct params = initial params + subs_params dot "random roughly orthonormal matrix"
+        w1 = self.w1_init + torch.einsum("i,ijk->jk", (self.subs_params, self.w1_subspace))   # requires grad?
+        b1 = self.b1_init + torch.einsum("i,ij->j", (self.subs_params, self.b1_subspace))
+
+        # Note initial input is always zero
+        subs_params2 = net2.subs_params
+        out = subs_params2.view(1, -1)
+        out = out.mm(w1) + b1
+        return out.view(-1)
+
+
 
 
 class OppAwareNet1stFixed(torch.nn.Module):
@@ -368,6 +412,7 @@ def str_to_var(name):
                  'OppAwareNetSubspace': OppAwareNetSubspace,
                  'NoInputFcNet': NoInputFcNet,
                  'SelfOutputNet': SelfOutputNet,
+                 'OppAwareLinearNetSubspace': OppAwareLinearNetSubspace,
                  'SGD': torch.optim.SGD,
                  'Adam': torch.optim.Adam,
                  ('PD', 'num_states'): 1,
@@ -496,7 +541,7 @@ def main(hp=None):
 
 
 # plot results:
-if __name__== "__main__":
+if __name__ == "__main__":
     main()
 
 

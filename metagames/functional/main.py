@@ -19,7 +19,8 @@ EXPERIMENTS = {
 }
 
 
-GAMES = {"prisoners_dilemma": game.PRISONERS_DILEMMA}
+GAMES = {"prisoners_dilemma": game.PRISONERS_DILEMMA,
+         'circling': game.CIRCLING_GAME}
 
 AGENTS = {
     "dot": agents.DotProductAgent,
@@ -119,6 +120,7 @@ def run_experiment(
     }
     data["timestamp_start"] = start_timestamp
     data["timestamp_end"] = time.time()
+    data["experiment_runner"] = experiment_runner
     return data
 
 
@@ -184,6 +186,9 @@ def prepare_player_specifications(agents_config, default_config=None, agent_seed
         except KeyError:
             agent_name = default_config.get("name", agent_cls.__name__)
         num_players = get_config(agent_config, "num_players", 1)
+        n_freeze_player_at = get_config(agent_config, "n_freeze_player_at")
+        lookahead = get_config(agent_config, "lookahead")
+
 
         for j in range(num_players):
             if num_players > 1:
@@ -199,6 +204,8 @@ def prepare_player_specifications(agents_config, default_config=None, agent_seed
                     optimizer=optimizer,
                     learning_rate=learning_rate,
                     step_rate=step_rate,
+                    n_freeze_player_at=n_freeze_player_at,
+                    lookahead=lookahead,
                     name=player_name,
                 )
             )

@@ -22,3 +22,5 @@ def binary_game(player1_payoff_matrix, player1_action, player2_action):
 
 
 PRISONERS_DILEMMA = np.array([[-2, 0], [-3, -1]], dtype=float)
+
+CIRCLING_GAME = 1
