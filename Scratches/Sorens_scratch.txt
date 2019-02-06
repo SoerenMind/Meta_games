@@ -1,4 +1,4 @@
-PD torch notes
+Soren's PD torch notes
 
 # TODO: First make write-up with things that did/didn't work etc
 -Data means for each setting (linear, LOLA, etc)
